@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 import os
@@ -8,9 +8,14 @@ import altair as alt
 from io import BytesIO
 from docx import Document
 from docx.shared import Inches
+import calendar
+import extra_streamlit_components as stx
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide")
+
+# --- LISTA DE MESES EN ESPAÑOL ---
+MESES_ESP = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
 # --- ESTILOS CSS ---
 def cargar_estilos():
@@ -26,15 +31,48 @@ def cargar_estilos():
         h1 { color: #E63946 !important; font-weight: 800 !important; letter-spacing: -1px; }
         h2, h3 { font-weight: 600 !important; letter-spacing: -0.5px; }
         
-        div[data-testid="stMetric"] {
-            background-color: #1A1C24; border: 1px solid #333; padding: 15px; border-radius: 8px;
+        /* CALENDARIO */
+        .calendar-container {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 5px;
+            margin-top: 10px;
+            margin-bottom: 20px;
         }
-        div[data-testid="stMetricValue"] { color: #E63946 !important; font-weight: 700; }
+        .calendar-day-header {
+            text-align: center;
+            font-weight: bold;
+            color: #888;
+            font-size: 0.8rem;
+        }
+        .calendar-day {
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: #FFF;
+            background-color: #262730;
+        }
+        .day-completed { background-color: #2ECC71 !important; color: #000 !important; }
+        .day-incomplete { background-color: #F39C12 !important; color: #000 !important; }
+        .day-empty { background-color: transparent; }
         
+        /* TARJETAS Y MÉTRICAS */
+        div[data-testid="stExpander"] { border: none; box-shadow: none; }
+        
+        div[data-testid="stMetric"] {
+            background-color: #1A1C24; border: 1px solid #333; padding: 10px; border-radius: 8px;
+        }
+        div[data-testid="stMetricValue"] { color: #E63946 !important; font-weight: 800; font-size: 1.8rem !important; }
+        div[data-testid="stMetricLabel"] { font-size: 0.9rem !important; }
+
         div.stButton > button:first-child {
-            background-color: #E63946; color: white; border-radius: 6px; border: none;
+            background-color: #E63946; color: white; border-radius: 8px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
-            padding-top: 10px; padding-bottom: 10px;
+            padding-top: 12px; padding-bottom: 12px;
         }
         div.stButton > button:first-child:hover {
             background-color: #FF4D5A; box-shadow: 0 4px 10px rgba(230, 57, 70, 0.4);
@@ -55,7 +93,7 @@ def conectar_google_sheet():
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return gspread.authorize(creds).open("El Estudio DB")
 
-# --- FUNCIONES ---
+# --- FUNCIONES DE USUARIO ---
 def obtener_usuario(usuario_input, password_input):
     try:
         sh = conectar_google_sheet()
@@ -67,17 +105,23 @@ def obtener_usuario(usuario_input, password_input):
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
 
+def obtener_usuario_por_cookie(usuario_input):
+    try:
+        sh = conectar_google_sheet()
+        df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
+        usuario = df[df["Usuario"].astype(str).str.strip() == usuario_input.strip()]
+        return usuario.iloc[0] if not usuario.empty else None
+    except: return None
+
+# --- FUNCIONES DE DATOS ---
 def leer_rutina(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Rutinas").get_all_records())
     if df.empty: return df
-    
     df["Alumno"] = df["Alumno"].astype(str).str.strip()
     df["Seccion"] = df["Seccion"].astype(str).str.strip().str.capitalize()
-    
     return df[df["Alumno"] == alumno.strip()]
 
-# Función universal para guardar cambios (Sirve para Admin y Alumno)
 def guardar_rutina_actualizada(alumno, dia, df_calentamiento, df_fuerza, df_cardio):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Rutinas")
@@ -85,37 +129,19 @@ def guardar_rutina_actualizada(alumno, dia, df_calentamiento, df_fuerza, df_card
     cols = ["Alumno", "Dia", "Seccion", "Orden", "Ejercicio", "Series", "Reps", "Kg", "Notas"]
 
     nuevas_filas = []
-    
-    # Procesamos Calentamiento
     for _, row in df_calentamiento.iterrows():
         if row["Ejercicio"]: 
-             # Manejo de compatibilidad si usamos la vista comprimida
-             s = row.get("Series", "2")
-             r = row.get("Reps", "10")
+             s = row.get("Series", "2"); r = row.get("Reps", "10")
              nuevas_filas.append({"Alumno": alumno, "Dia": dia, "Seccion": "Calentamiento", "Orden": "-", "Ejercicio": row["Ejercicio"], "Series": s, "Reps": r, "Kg": "-", "Notas": row["Notas"]})
-    
-    # Procesamos Fuerza
     for _, row in df_fuerza.iterrows():
         if row["Ejercicio"]:
-            # Si viene de la vista comprimida del alumno, necesitamos recuperar Series/Reps
-            # Si existen columnas ocultas en el dataframe editado, las usamos
-            s = row.get("Series", "3")
-            r = row.get("Reps", "10")
-            o = row.get("Orden", "-")
-            
-            # Limpieza del nombre si venía con el orden pegado (A1. Sentadilla -> Sentadilla)
-            ej_nombre = row["Ejercicio"]
-            
-            nuevas_filas.append({"Alumno": alumno, "Dia": dia, "Seccion": "Fuerza", "Orden": o, "Ejercicio": ej_nombre, "Series": s, "Reps": r, "Kg": row["Kg"], "Notas": row["Notas"]})
-    
-    # Procesamos Cardio
+            s = row.get("Series", "3"); r = row.get("Reps", "10"); o = row.get("Orden", "-"); ej = row["Ejercicio"]
+            nuevas_filas.append({"Alumno": alumno, "Dia": dia, "Seccion": "Fuerza", "Orden": o, "Ejercicio": ej, "Series": s, "Reps": r, "Kg": row["Kg"], "Notas": row["Notas"]})
     for _, row in df_cardio.iterrows():
         if row["Ejercicio"]:
-            s = row.get("Series", "-")
-            r = row.get("Reps", "-")
+            s = row.get("Series", "-"); r = row.get("Reps", "-")
             nuevas_filas.append({"Alumno": alumno, "Dia": dia, "Seccion": "Cardio", "Orden": "-", "Ejercicio": row["Ejercicio"], "Series": s, "Reps": r, "Kg": "-", "Notas": row["Notas"]})
 
-    # Guardado seguro
     if not all_data:
         df_final = pd.DataFrame(nuevas_filas)
         for c in cols: 
@@ -127,18 +153,14 @@ def guardar_rutina_actualizada(alumno, dia, df_calentamiento, df_fuerza, df_card
     df_old = pd.DataFrame(all_data)
     df_old["Alumno"] = df_old["Alumno"].astype(str).str.strip()
     df_old["Dia"] = df_old["Dia"].astype(str).str.strip()
-    
     mask = ~((df_old["Alumno"] == alumno) & (df_old["Dia"] == dia))
     df_clean = df_old[mask]
-    
     df_nuevas = pd.DataFrame(nuevas_filas)
     df_final = pd.concat([df_clean, df_nuevas], ignore_index=True)
     df_final = df_final.fillna("")
-    
     for c in cols: 
         if c not in df_final.columns: df_final[c] = ""
     df_final = df_final[cols]
-    
     ws.clear()
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
 
@@ -182,7 +204,6 @@ def generar_word(alumno, df_rutina):
     for dia in dias:
         doc.add_heading(dia, level=1)
         rutina_dia = df_rutina[df_rutina["Dia"] == dia]
-        
         c = rutina_dia[rutina_dia["Seccion"] == "Calentamiento"]
         if not c.empty:
             doc.add_heading('Calentamiento', 2)
@@ -190,7 +211,6 @@ def generar_word(alumno, df_rutina):
             r=t.rows[0].cells; r[0].text='Ejer'; r[1].text='Series'; r[2].text='Notas'
             for _, row in c.iterrows(): 
                 rr=t.add_row().cells; rr[0].text=str(row["Ejercicio"]); rr[1].text=f"{row['Series']}x{row['Reps']}"; rr[2].text=str(row["Notas"])
-        
         f = rutina_dia[rutina_dia["Seccion"] == "Fuerza"]
         if not f.empty:
             doc.add_heading('Fuerza', 2)
@@ -198,7 +218,6 @@ def generar_word(alumno, df_rutina):
             r=t.rows[0].cells; r[0].text='Ord'; r[1].text='Ejer'; r[2].text='Ser'; r[3].text='Rep'; r[4].text='Kg'
             for _, row in f.iterrows():
                 rr=t.add_row().cells; rr[0].text=str(row["Orden"]); rr[1].text=str(row["Ejercicio"]); rr[2].text=str(row["Series"]); rr[3].text=str(row["Reps"]); rr[4].text=str(row["Kg"])
-
         ca = rutina_dia[rutina_dia["Seccion"] == "Cardio"]
         if not ca.empty:
             doc.add_heading('Cardio', 2)
@@ -207,39 +226,93 @@ def generar_word(alumno, df_rutina):
             for _, row in ca.iterrows():
                 rr=t.add_row().cells; rr[0].text=str(row["Ejercicio"]); rr[1].text=f"{row['Series']} | {row['Reps']}"; rr[2].text=str(row["Notas"])
         doc.add_paragraph("\n")
-    
     b = BytesIO(); doc.save(b); b.seek(0); return b
 
-# --- INTERFAZ ---
+def render_calendar(year, month, df_sesiones):
+    cal = calendar.monthcalendar(year, month)
+    month_name = MESES_ESP[month]
+    
+    asistencia_map = {}
+    if not df_sesiones.empty:
+        mask = (df_sesiones["Fecha"].dt.year == year) & (df_sesiones["Fecha"].dt.month == month)
+        df_mes = df_sesiones[mask]
+        for _, row in df_mes.iterrows():
+            asistencia_map[row["Fecha"].day] = row["Estado"]
+
+    html = f"""
+    <div style="text-align:center; margin-bottom:10px; font-weight:bold; font-size:1.2rem; color:#E63946;">
+        {month_name} {year}
+    </div>
+    <div class="calendar-container">
+        <div class="calendar-day-header">L</div>
+        <div class="calendar-day-header">M</div>
+        <div class="calendar-day-header">M</div>
+        <div class="calendar-day-header">J</div>
+        <div class="calendar-day-header">V</div>
+        <div class="calendar-day-header">S</div>
+        <div class="calendar-day-header">D</div>
+    """
+    for week in cal:
+        for day in week:
+            if day == 0:
+                html += '<div class="calendar-day day-empty"></div>'
+            else:
+                css_class = "calendar-day"
+                estado = asistencia_map.get(day, None)
+                if estado == "Completado": css_class += " day-completed"
+                elif estado == "Incompleto": css_class += " day-incomplete"
+                html += f'<div class="{css_class}">{day}</div>'
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+# --- GESTOR DE COOKIES (SIN CACHÉ PARA EVITAR WARNINGS) ---
+cookie_manager = stx.CookieManager()
+
+# --- LOGICA DE SESION ---
 if 'logueado' not in st.session_state:
     st.session_state['logueado'] = False
 
+# 1. Intentamos Login Automático por Cookie
+if not st.session_state['logueado']:
+    try:
+        cookie_usuario = cookie_manager.get(cookie="gym_user")
+        if cookie_usuario:
+            user_data = obtener_usuario_por_cookie(cookie_usuario)
+            if user_data is not None:
+                st.session_state['logueado'] = True
+                st.session_state['usuario_info'] = user_data
+                st.rerun()
+    except: pass
+
+# 2. Si no hay cookie o falló, mostramos Login
 if not st.session_state['logueado']:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<br><br><h1 style='text-align: center;'>EL ESTUDIO 🔥</h1><br>", unsafe_allow_html=True)
         with st.container(border=True):
             with st.form("login"):
-                u = st.text_input("USUARIO")
-                p = st.text_input("CONTRASEÑA", type="password")
+                u = st.text_input("USUARIO"); p = st.text_input("CONTRASEÑA", type="password")
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.form_submit_button("ENTRAR", use_container_width=True):
                     user = obtener_usuario(u, p)
                     if user is not None: 
+                        # LOGIN EXITOSO: Guardamos Cookie por 30 días
+                        cookie_manager.set("gym_user", u, expires_at=datetime.now() + timedelta(days=30))
+                        
                         st.session_state['logueado'] = True
                         st.session_state['usuario_info'] = user
                         st.rerun()
                     else: st.error("❌ Error")
-
 else:
     datos = st.session_state['usuario_info']
     rol, nombre, alias = datos['Rol'], datos['Nombre'], datos['Usuario']
     
     with st.sidebar:
-        st.markdown(f"## {nombre.upper()}")
-        st.caption(f"ROL: {rol.upper()}")
+        st.markdown(f"## {nombre.upper()}"); st.caption(f"ROL: {rol.upper()}")
         st.markdown("---")
+        # BOTÓN SALIR: Borra la cookie y cierra sesión
         if st.button("SALIR", use_container_width=True):
+            cookie_manager.delete("gym_user")
             st.session_state['logueado'] = False
             st.rerun()
 
@@ -254,13 +327,11 @@ else:
             als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
             alu = c1.selectbox("ALUMNO", als)
             dia = c2.selectbox("DÍA", ["Día 1", "Día 2", "Día 3", "Día 4"])
-            
             rut = leer_rutina(alu)
-            # Default templates
+            # Defaults
             d_cal = pd.DataFrame([{"Ejercicio": "", "Series": "2", "Reps": "10", "Notas": ""}]*4)
             d_fue = pd.DataFrame({"Orden":["A1","A2","B1","B2","C1","C2","D1","D2"], "Ejercicio":[""]*8, "Series":["3"]*8, "Reps":["8-12"]*8, "Kg":[0.0]*8, "Notas":[""]*8})
             d_car = pd.DataFrame([{"Ejercicio": "", "Series": "10'", "Reps": "RPE 6", "Notas": ""}]*2)
-            
             if not rut.empty:
                 r_dia = rut[rut["Dia"] == dia]
                 if not r_dia.empty:
@@ -272,7 +343,6 @@ else:
                         d_fue["Kg"] = pd.to_numeric(d_fue["Kg"], errors='coerce').fillna(0.0)
                     ca = r_dia[r_dia["Seccion"] == "Cardio"]
                     if not ca.empty: d_car = ca[["Ejercicio","Series","Reps","Notas"]]
-            
             st.markdown("---")
             with st.container(border=True):
                 st.caption("CALENTAMIENTO")
@@ -281,12 +351,11 @@ else:
                 ed_f = st.data_editor(d_fue, num_rows="dynamic", use_container_width=True, height=350, key=f"f_{alu}_{dia}", column_config={"Kg": st.column_config.NumberColumn(format="%.1f")})
                 st.caption("CARDIO")
                 ed_ca = st.data_editor(d_car, num_rows="dynamic", use_container_width=True, key=f"ca_{alu}_{dia}", column_config={"Series": st.column_config.TextColumn("Tiempo/Dist"), "Reps": st.column_config.TextColumn("Intensidad")})
-
             c_g, c_d = st.columns([1,1])
             with c_g:
                 if st.button("💾 GUARDAR", type="primary", use_container_width=True):
                     guardar_rutina_actualizada(alu, dia, ed_c, ed_f, ed_ca)
-                    st.success("Guardado y reparado.")
+                    st.success("Guardado.")
                     st.rerun()
             with c_d:
                 if not rut.empty:
@@ -294,24 +363,54 @@ else:
 
         with tab2:
             alu_s = st.selectbox("VER DATOS DE:", als)
+            st.markdown("### 📅 Rendimiento")
             df_s = leer_sesiones_alumno(alu_s)
+            
+            # --- CALENDARIO + CONTADORES ---
+            now = datetime.now()
+            c_mes, c_anio = st.columns([2, 1])
+            sel_mes = c_mes.selectbox("Mes", MESES_ESP[1:], index=now.month-1)
+            sel_anio = c_anio.number_input("Año", value=now.year, step=1)
+            mes_idx = MESES_ESP.index(sel_mes)
+
             if not df_s.empty:
-                st.metric("Sesiones", len(df_s))
-                ch = alt.Chart(df_s).mark_rect().encode(x='week(Fecha):O', y='day(Fecha):O', color=alt.Color('Estado', scale=alt.Scale(range=['#2ECC71', '#F39C12']))).properties(height=200)
-                st.altair_chart(ch, use_container_width=True)
+                # 1. Contador ANUAL
+                df_year = df_s[df_s["Fecha"].dt.year == sel_anio]
+                count_year = len(df_year)
+                # 2. Contador MENSUAL
+                df_month = df_year[df_year["Fecha"].dt.month == mes_idx]
+                count_month = len(df_month)
+                m1, m2 = st.columns(2)
+                m1.metric(f"Total {sel_mes}", count_month)
+                m2.metric(f"Total Año {sel_anio}", count_year)
+                render_calendar(sel_anio, mes_idx, df_s)
+            else: 
+                st.info("Sin datos.")
+                render_calendar(sel_anio, mes_idx, pd.DataFrame())
             
             st.markdown("---")
-            st.markdown("### 📈 Cargas")
+            st.markdown("### 📈 Historial")
             df_r = leer_registros_alumno(alu_s)
             if not df_r.empty and "Peso" in df_r.columns:
                 lista_ejercicios = df_r["Ejercicio"].unique()
                 if len(lista_ejercicios) > 0:
                     ej_v = st.selectbox("Ejercicio", lista_ejercicios)
-                    df_plt = df_r[df_r["Ejercicio"] == ej_v].sort_values("Fecha")
+                    df_plt = df_r[df_r["Ejercicio"] == ej_v].sort_values("Fecha", ascending=False)
+                    st.caption("Evolución Cargas")
+                    st.line_chart(df_plt.set_index("Fecha")["Peso"], color="#E63946")
                     
-                    st.line_chart(df_plt.set_index("Fecha")["Peso"])
-                    if "Repeticiones" in df_plt.columns:
-                        st.line_chart(df_plt.set_index("Fecha")["Repeticiones"])
+                    st.markdown("#### 🗂️ Bitácora")
+                    for idx, row in df_plt.iterrows():
+                        with st.container(border=True):
+                            c_date, c_data = st.columns([1, 3])
+                            with c_date:
+                                st.markdown(f"**{row['Fecha'].strftime('%d/%m')}**")
+                                st.caption(f"{row['Fecha'].year}")
+                            with c_data:
+                                st.markdown(f"💪 **{row['Peso']} kg** x  **{row.get('Repeticiones',0)} reps**")
+                                st.markdown(f"🔥 RPE: {row.get('RPE', '-')}")
+                                if str(row.get('Notas', '')) != "":
+                                    st.info(f"📝 {row['Notas']}")
                 else: st.info("Hay registros pero sin ejercicios válidos.")
             else: st.info("El alumno no ha registrado pesos todavía.")
 
@@ -328,101 +427,46 @@ else:
                 d_hoy = st.selectbox("DÍA", dias)
                 r_hoy = rut[rut["Dia"] == d_hoy]
                 
-                # --- CALENTAMIENTO (Editable para que puedan poner notas) ---
                 c = r_hoy[r_hoy["Seccion"] == "Calentamiento"]
                 if not c.empty:
                     st.markdown("### 🔥 Entrada en Calor")
-                    # Vista comprimida
-                    c_display = c.copy()
-                    ed_c_alumno = st.data_editor(
-                        c_display[["Ejercicio", "Series", "Reps", "Notas"]],
-                        hide_index=True,
-                        use_container_width=True,
-                        disabled=["Ejercicio", "Series", "Reps"], # Solo Notas editable
-                        key=f"cal_alu_{d_hoy}"
-                    )
-                else: ed_c_alumno = pd.DataFrame() # Vacío
+                    ed_c_alumno = st.data_editor(c[["Ejercicio", "Series", "Reps", "Notas"]], hide_index=True, use_container_width=True, disabled=["Ejercicio","Series","Reps"], key=f"cal_alu_{d_hoy}")
+                else: ed_c_alumno = pd.DataFrame()
                 
-                # --- FUERZA (COMPRIMIDO Y EDITABLE) ---
                 f = r_hoy[r_hoy["Seccion"] == "Fuerza"]
                 if not f.empty:
                     st.markdown("### 🏋️‍♂️ Fuerza")
-                    
-                    # 1. Crear vista COMPRIMIDA para celular
                     f_display = f.copy()
-                    
-                    # Fusionamos ORDEN con EJERCICIO (Ej: "A1. Sentadilla")
                     f_display["Ejercicio_Full"] = f_display["Orden"] + ". " + f_display["Ejercicio"]
-                    
-                    # Fusionamos SERIES y REPS (Ej: "3 x 10")
                     f_display["SxR"] = f_display["Series"].astype(str) + " x " + f_display["Reps"].astype(str)
-                    
-                    # Columnas finales: Ejercicio | SxR | Kg | Notas
                     f_final = f_display[["Ejercicio_Full", "SxR", "Kg", "Notas"]]
-                    
-                    # Columnas ocultas (para guardar después)
                     f_final["_Orden_Original"] = f_display["Orden"]
                     f_final["_Ejercicio_Original"] = f_display["Ejercicio"]
                     f_final["_Series_Original"] = f_display["Series"]
                     f_final["_Reps_Original"] = f_display["Reps"]
-                    
-                    ed_f_alumno = st.data_editor(
-                        f_final,
-                        column_order=["Ejercicio_Full", "SxR", "Kg", "Notas"], # Solo mostramos estas 4
-                        column_config={
-                            "Ejercicio_Full": st.column_config.TextColumn("Ejercicio (Bloque)", disabled=True),
-                            "SxR": st.column_config.TextColumn("Series x Reps", disabled=True),
-                            "Kg": st.column_config.NumberColumn("Kg (Real)", format="%.1f"),
-                            "Notas": st.column_config.TextColumn("Mis Notas")
-                        },
-                        hide_index=True,
-                        use_container_width=True,
-                        key=f"fue_alu_{d_hoy}"
-                    )
+                    ed_f_alumno = st.data_editor(f_final, column_order=["Ejercicio_Full", "SxR", "Kg", "Notas"], column_config={"Ejercicio_Full": st.column_config.TextColumn("Ejercicio", disabled=True), "SxR": st.column_config.TextColumn("SxR", disabled=True), "Kg": st.column_config.NumberColumn("Kg", format="%.1f"), "Notas": st.column_config.TextColumn("Notas")}, hide_index=True, use_container_width=True, key=f"fue_alu_{d_hoy}")
                 else: ed_f_alumno = pd.DataFrame()
 
-                # --- CARDIO (Editable) ---
                 ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
                 if not ca.empty: 
                     st.markdown("### 🏃‍♂️ Cardio")
-                    ca_display = ca.copy()
-                    ed_ca_alumno = st.data_editor(
-                        ca_display[["Ejercicio", "Series", "Reps", "Notas"]],
-                        column_config={
-                            "Series": st.column_config.TextColumn("Tiempo/Dist", disabled=True),
-                            "Reps": st.column_config.TextColumn("Intensidad", disabled=True),
-                            "Ejercicio": st.column_config.TextColumn("Ejercicio", disabled=True)
-                        },
-                        hide_index=True,
-                        use_container_width=True,
-                        key=f"car_alu_{d_hoy}"
-                    )
+                    ed_ca_alumno = st.data_editor(ca[["Ejercicio", "Series", "Reps", "Notas"]], column_config={"Series":st.column_config.TextColumn("Tiempo/Dist", disabled=True), "Reps":st.column_config.TextColumn("Intensidad", disabled=True), "Ejercicio":st.column_config.TextColumn(disabled=True)}, hide_index=True, use_container_width=True, key=f"car_alu_{d_hoy}")
                 else: ed_ca_alumno = pd.DataFrame()
                 
-                # --- BOTÓN GUARDAR CAMBIOS ---
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("💾 GUARDAR MIS NOTAS Y PESOS", type="primary", use_container_width=True):
-                    # Reconstruimos los dataframes originales para guardar
-                    
-                    # 1. Fuerza: Recuperamos columnas ocultas
+                if st.button("💾 GUARDAR CAMBIOS RUTINA", type="primary", use_container_width=True):
                     df_f_save = pd.DataFrame()
                     if not ed_f_alumno.empty:
                         df_f_save = ed_f_alumno.copy()
-                        # Mapeamos de vuelta a lo que espera la base de datos
                         df_f_save["Orden"] = df_f_save["_Orden_Original"]
                         df_f_save["Ejercicio"] = df_f_save["_Ejercicio_Original"]
                         df_f_save["Series"] = df_f_save["_Series_Original"]
                         df_f_save["Reps"] = df_f_save["_Reps_Original"]
-                        # Kg y Notas ya están editados
-                    
-                    # 2. Calentamiento y Cardio (directos)
                     guardar_rutina_actualizada(alias, d_hoy, ed_c_alumno, df_f_save, ed_ca_alumno)
-                    st.success("✅ ¡Tus anotaciones se han guardado en la rutina!")
-                    st.rerun()
+                    st.success("✅ Notas guardadas"); st.rerun()
 
-                # --- REGISTRO EXTRA ---
                 st.markdown("---")
-                with st.expander("➕ AGREGAR REGISTRO EXTRA (Opcional)"):
+                with st.expander("➕ AGREGAR REGISTRO EXTRA"):
                     with st.form("reg"):
                         lista_ej = f["Ejercicio"].unique() if 'f' in locals() and not f.empty else ["Varios"]
                         ej = st.selectbox("Ejercicio", lista_ej)
@@ -437,36 +481,57 @@ else:
 
                 c1, c2 = st.columns(2)
                 with c1: 
-                    if st.button("✅ LISTO", type="primary", use_container_width=True):
-                        guardar_estado_sesion(alias, "Completado")
-                        st.balloons()
+                    if st.button("✅ LISTO", type="primary", use_container_width=True): guardar_estado_sesion(alias, "Completado"); st.balloons()
                 with c2: 
-                    if st.button("⚠️ INCOMPLETO", use_container_width=True):
-                        guardar_estado_sesion(alias, "Incompleto")
-            else:
-                st.info("No tienes rutina cargada.")
+                    if st.button("⚠️ INCOMPLETO", use_container_width=True): guardar_estado_sesion(alias, "Incompleto")
+            else: st.info("No tienes rutina cargada.")
         
         with t2:
+            st.markdown("### 📅 Mi Constancia")
             dfs = leer_sesiones_alumno(alias)
+            
+            now = datetime.now()
+            c_mes, c_anio = st.columns([2, 1])
+            sel_mes_al = c_mes.selectbox("Mes", MESES_ESP[1:], index=now.month-1, key="mes_al")
+            sel_anio_al = c_anio.number_input("Año", value=now.year, step=1, key="anio_al")
+            mes_idx_al = MESES_ESP.index(sel_mes_al)
+            
             if not dfs.empty:
-                st.metric("Entrenamientos", len(dfs))
-                ch = alt.Chart(dfs).mark_rect().encode(x='monthdate(Fecha):O', y='month(Fecha):O', color=alt.Color('Estado', scale=alt.Scale(range=['#2ECC71', '#F39C12']))).properties(height=250)
-                st.altair_chart(ch, use_container_width=True)
+                # 1. Contador ANUAL
+                df_year = dfs[dfs["Fecha"].dt.year == sel_anio_al]
+                count_year = len(df_year)
+                # 2. Contador MENSUAL
+                df_month = df_year[df_year["Fecha"].dt.month == mes_idx_al]
+                count_month = len(df_month)
+                m1, m2 = st.columns(2)
+                m1.metric(f"Entrenos {sel_mes_al}", count_month)
+                m2.metric(f"Total Año {sel_anio_al}", count_year)
+                render_calendar(sel_anio_al, mes_idx_al, dfs)
+            else:
+                st.info("Sin datos.")
+                render_calendar(sel_anio_al, mes_idx_al, pd.DataFrame())
             
             st.markdown("---")
-            st.markdown("### 📈 Mis Cargas y Reps")
+            st.markdown("### 📈 Historial y Notas")
             df_r = leer_registros_alumno(alias)
             if not df_r.empty and "Peso" in df_r.columns:
                  lista_ej = df_r["Ejercicio"].unique()
                  if len(lista_ej) > 0:
                      ej_sel = st.selectbox("Ver progreso en:", lista_ej)
-                     df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha")
-                     
-                     st.caption("Evolución del Peso (Kg)")
+                     df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=False)
+                     st.caption("Gráfico de Peso")
                      st.line_chart(df_plt.set_index("Fecha")["Peso"], color="#E63946")
-                     
-                     if "Repeticiones" in df_plt.columns:
-                         st.caption("Evolución de Repeticiones")
-                         st.line_chart(df_plt.set_index("Fecha")["Repeticiones"], color="#ffffff")
+                     st.markdown("#### 🗂️ Bitácora")
+                     for idx, row in df_plt.iterrows():
+                         with st.container(border=True):
+                             c_date, c_data = st.columns([1, 3])
+                             with c_date:
+                                 st.markdown(f"**{row['Fecha'].strftime('%d/%m')}**")
+                                 st.caption(f"{row['Fecha'].year}")
+                             with c_data:
+                                 st.markdown(f"💪 **{row['Peso']} kg** x  **{row.get('Repeticiones',0)} reps**")
+                                 st.markdown(f"🔥 RPE: {row.get('RPE', '-')}")
+                                 if str(row.get('Notas', '')) != "":
+                                     st.info(f"📝 {row['Notas']}")
                  else: st.write("Datos insuficientes.")
             else: st.write("Registra tus series para ver gráficos.")
