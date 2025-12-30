@@ -82,9 +82,10 @@ def cargar_estilos():
 
 cargar_estilos()
 
-# --- CONEXIÓN GOOGLE SHEETS ---
+# --- CONEXIÓN GOOGLE SHEETS (OPTIMIZADA CON CACHÉ) ---
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
+@st.cache_resource
 def conectar_google_sheet():
     if os.path.exists("mis_secretos.json"):
         creds = Credentials.from_service_account_file("mis_secretos.json", scopes=SCOPES)
@@ -265,7 +266,7 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- GESTOR DE COOKIES (SIN CACHÉ PARA EVITAR WARNINGS) ---
+# --- GESTOR DE COOKIES ---
 cookie_manager = stx.CookieManager()
 
 # --- LOGICA DE SESION ---
