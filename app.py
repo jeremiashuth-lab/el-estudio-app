@@ -14,7 +14,7 @@ import extra_streamlit_components as stx
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide")
 
-# --- LISTA DE MESES EN ESPAÑOL ---
+# --- LISTA DE MESES ---
 MESES_ESP = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
 # --- ESTILOS CSS ---
@@ -31,58 +31,34 @@ def cargar_estilos():
         h1 { color: #E63946 !important; font-weight: 800 !important; letter-spacing: -1px; }
         h2, h3 { font-weight: 600 !important; letter-spacing: -0.5px; }
         
-        /* CALENDARIO */
         .calendar-container {
-            display: grid;
-            grid-template-columns: repeat(7, 1fr);
-            gap: 5px;
-            margin-top: 10px;
-            margin-bottom: 20px;
+            display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 10px; margin-bottom: 20px;
         }
-        .calendar-day-header {
-            text-align: center;
-            font-weight: bold;
-            color: #888;
-            font-size: 0.8rem;
-        }
+        .calendar-day-header { text-align: center; font-weight: bold; color: #888; font-size: 0.8rem; }
         .calendar-day {
-            aspect-ratio: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            font-weight: bold;
-            font-size: 0.9rem;
-            color: #FFF;
-            background-color: #262730;
+            aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+            border-radius: 50%; font-weight: bold; font-size: 0.9rem; color: #FFF; background-color: #262730;
         }
         .day-completed { background-color: #2ECC71 !important; color: #000 !important; }
         .day-incomplete { background-color: #F39C12 !important; color: #000 !important; }
         .day-empty { background-color: transparent; }
         
-        /* TARJETAS Y MÉTRICAS */
         div[data-testid="stExpander"] { border: none; box-shadow: none; }
-        
-        div[data-testid="stMetric"] {
-            background-color: #1A1C24; border: 1px solid #333; padding: 10px; border-radius: 8px;
-        }
+        div[data-testid="stMetric"] { background-color: #1A1C24; border: 1px solid #333; padding: 10px; border-radius: 8px; }
         div[data-testid="stMetricValue"] { color: #E63946 !important; font-weight: 800; font-size: 1.8rem !important; }
-        div[data-testid="stMetricLabel"] { font-size: 0.9rem !important; }
-
+        
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 8px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
             padding-top: 12px; padding-bottom: 12px;
         }
-        div.stButton > button:first-child:hover {
-            background-color: #FF4D5A; box-shadow: 0 4px 10px rgba(230, 57, 70, 0.4);
-        }
+        div.stButton > button:first-child:hover { background-color: #FF4D5A; }
         </style>
     """, unsafe_allow_html=True)
 
 cargar_estilos()
 
-# --- CONEXIÓN GOOGLE SHEETS (OPTIMIZADA CON CACHÉ) ---
+# --- CONEXIÓN GOOGLE SHEETS (OPTIMIZADA) ---
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 @st.cache_resource
@@ -94,11 +70,53 @@ def conectar_google_sheet():
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return gspread.authorize(creds).open("El Estudio DB")
 
-# --- FUNCIONES DE USUARIO ---
+# --- FUNCIONES DE LECTURA (CON CACHÉ DATA - ANTIBLOQUEO) ---
+# Usamos ttl=600 (10 minutos) para que no lea Google cada vez que escribes una letra
+
+@st.cache_data(ttl=600)
+def obtener_todos_usuarios():
+    sh = conectar_google_sheet()
+    return pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
+
+@st.cache_data(ttl=600)
+def leer_rutina(alumno):
+    sh = conectar_google_sheet()
+    df = pd.DataFrame(sh.worksheet("Rutinas").get_all_records())
+    if df.empty: return df
+    df["Alumno"] = df["Alumno"].astype(str).str.strip()
+    df["Seccion"] = df["Seccion"].astype(str).str.strip().str.capitalize()
+    return df[df["Alumno"] == alumno.strip()]
+
+@st.cache_data(ttl=600)
+def leer_sesiones_alumno(alumno):
+    sh = conectar_google_sheet()
+    df = pd.DataFrame(sh.worksheet("Sesiones").get_all_records())
+    if df.empty: return df
+    df_alumno = df[df["Usuario"].astype(str).str.strip() == alumno.strip()].copy()
+    if not df_alumno.empty:
+        df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed').dt.normalize()
+    return df_alumno
+
+@st.cache_data(ttl=600)
+def leer_registros_alumno(alumno):
+    sh = conectar_google_sheet()
+    raw_data = sh.worksheet("Registros").get_all_records()
+    df = pd.DataFrame(raw_data)
+    if df.empty: return df
+    df_alumno = df[df["Usuario"].astype(str).str.strip() == alumno.strip()].copy()
+    if not df_alumno.empty:
+        df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed', errors='coerce').dt.normalize()
+        df_alumno["Peso"] = pd.to_numeric(df_alumno["Peso"], errors='coerce').fillna(0)
+        if "Repeticiones" in df_alumno.columns:
+            df_alumno["Repeticiones"] = pd.to_numeric(df_alumno["Repeticiones"], errors='coerce').fillna(0)
+        else: df_alumno["Repeticiones"] = 0
+    return df_alumno
+
+# --- FUNCIONES DE ESCRITURA (SIN CACHÉ) ---
 def obtener_usuario(usuario_input, password_input):
+    # No cacheamos el login para seguridad inmediata
     try:
-        sh = conectar_google_sheet()
-        df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
+        df = obtener_todos_usuarios() # Usamos la versión cacheada para validar
         usuario = df[
             (df["Usuario"].astype(str).str.strip() == usuario_input.strip()) & 
             (df["Password"].astype(str).str.strip() == password_input.strip())
@@ -108,20 +126,10 @@ def obtener_usuario(usuario_input, password_input):
 
 def obtener_usuario_por_cookie(usuario_input):
     try:
-        sh = conectar_google_sheet()
-        df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
+        df = obtener_todos_usuarios()
         usuario = df[df["Usuario"].astype(str).str.strip() == usuario_input.strip()]
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
-
-# --- FUNCIONES DE DATOS ---
-def leer_rutina(alumno):
-    sh = conectar_google_sheet()
-    df = pd.DataFrame(sh.worksheet("Rutinas").get_all_records())
-    if df.empty: return df
-    df["Alumno"] = df["Alumno"].astype(str).str.strip()
-    df["Seccion"] = df["Seccion"].astype(str).str.strip().str.capitalize()
-    return df[df["Alumno"] == alumno.strip()]
 
 def guardar_rutina_actualizada(alumno, dia, df_calentamiento, df_fuerza, df_cardio):
     sh = conectar_google_sheet()
@@ -174,29 +182,6 @@ def guardar_estado_sesion(usuario, estado):
     sh = conectar_google_sheet()
     fecha = datetime.now().strftime("%Y-%m-%d")
     sh.worksheet("Sesiones").append_row([fecha, usuario, estado])
-
-def leer_sesiones_alumno(alumno):
-    sh = conectar_google_sheet()
-    df = pd.DataFrame(sh.worksheet("Sesiones").get_all_records())
-    if df.empty: return df
-    df_alumno = df[df["Usuario"].astype(str).str.strip() == alumno.strip()].copy()
-    if not df_alumno.empty:
-        df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed').dt.normalize()
-    return df_alumno
-
-def leer_registros_alumno(alumno):
-    sh = conectar_google_sheet()
-    raw_data = sh.worksheet("Registros").get_all_records()
-    df = pd.DataFrame(raw_data)
-    if df.empty: return df
-    df_alumno = df[df["Usuario"].astype(str).str.strip() == alumno.strip()].copy()
-    if not df_alumno.empty:
-        df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed', errors='coerce').dt.normalize()
-        df_alumno["Peso"] = pd.to_numeric(df_alumno["Peso"], errors='coerce').fillna(0)
-        if "Repeticiones" in df_alumno.columns:
-            df_alumno["Repeticiones"] = pd.to_numeric(df_alumno["Repeticiones"], errors='coerce').fillna(0)
-        else: df_alumno["Repeticiones"] = 0
-    return df_alumno
 
 def generar_word(alumno, df_rutina):
     doc = Document()
@@ -273,7 +258,7 @@ cookie_manager = stx.CookieManager()
 if 'logueado' not in st.session_state:
     st.session_state['logueado'] = False
 
-# 1. Intentamos Login Automático por Cookie
+# 1. Login Automático
 if not st.session_state['logueado']:
     try:
         cookie_usuario = cookie_manager.get(cookie="gym_user")
@@ -285,7 +270,7 @@ if not st.session_state['logueado']:
                 st.rerun()
     except: pass
 
-# 2. Si no hay cookie o falló, mostramos Login
+# 2. Login Manual
 if not st.session_state['logueado']:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -297,9 +282,7 @@ if not st.session_state['logueado']:
                 if st.form_submit_button("ENTRAR", use_container_width=True):
                     user = obtener_usuario(u, p)
                     if user is not None: 
-                        # LOGIN EXITOSO: Guardamos Cookie por 30 días
                         cookie_manager.set("gym_user", u, expires_at=datetime.now() + timedelta(days=30))
-                        
                         st.session_state['logueado'] = True
                         st.session_state['usuario_info'] = user
                         st.rerun()
@@ -311,7 +294,6 @@ else:
     with st.sidebar:
         st.markdown(f"## {nombre.upper()}"); st.caption(f"ROL: {rol.upper()}")
         st.markdown("---")
-        # BOTÓN SALIR: Borra la cookie y cierra sesión
         if st.button("SALIR", use_container_width=True):
             cookie_manager.delete("gym_user")
             st.session_state['logueado'] = False
@@ -323,16 +305,20 @@ else:
         tab1, tab2 = st.tabs(["DISEÑO", "ESTADÍSTICAS"])
         with tab1:
             c1, c2 = st.columns(2)
-            sh = conectar_google_sheet()
-            us = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
+            # USAMOS FUNCIÓN CACHEADA PARA NO ROMPER GOOGLE
+            us = obtener_todos_usuarios()
             als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
             alu = c1.selectbox("ALUMNO", als)
             dia = c2.selectbox("DÍA", ["Día 1", "Día 2", "Día 3", "Día 4"])
+            
+            # LECTURA CACHEADA
             rut = leer_rutina(alu)
+            
             # Defaults
             d_cal = pd.DataFrame([{"Ejercicio": "", "Series": "2", "Reps": "10", "Notas": ""}]*4)
             d_fue = pd.DataFrame({"Orden":["A1","A2","B1","B2","C1","C2","D1","D2"], "Ejercicio":[""]*8, "Series":["3"]*8, "Reps":["8-12"]*8, "Kg":[0.0]*8, "Notas":[""]*8})
             d_car = pd.DataFrame([{"Ejercicio": "", "Series": "10'", "Reps": "RPE 6", "Notas": ""}]*2)
+            
             if not rut.empty:
                 r_dia = rut[rut["Dia"] == dia]
                 if not r_dia.empty:
@@ -356,18 +342,22 @@ else:
             with c_g:
                 if st.button("💾 GUARDAR", type="primary", use_container_width=True):
                     guardar_rutina_actualizada(alu, dia, ed_c, ed_f, ed_ca)
-                    st.success("Guardado.")
-                    st.rerun()
+                    # IMPORTANTE: LIMPIAR CACHÉ PARA VER CAMBIOS
+                    st.cache_data.clear()
+                    st.success("Guardado."); st.rerun()
             with c_d:
                 if not rut.empty:
                     st.download_button("📥 WORD", generar_word(alu, rut), f"{alu}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
 
         with tab2:
+            # USAMOS FUNCIÓN CACHEADA
+            us = obtener_todos_usuarios()
+            als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
             alu_s = st.selectbox("VER DATOS DE:", als)
+            
             st.markdown("### 📅 Rendimiento")
             df_s = leer_sesiones_alumno(alu_s)
             
-            # --- CALENDARIO + CONTADORES ---
             now = datetime.now()
             c_mes, c_anio = st.columns([2, 1])
             sel_mes = c_mes.selectbox("Mes", MESES_ESP[1:], index=now.month-1)
@@ -375,10 +365,8 @@ else:
             mes_idx = MESES_ESP.index(sel_mes)
 
             if not df_s.empty:
-                # 1. Contador ANUAL
                 df_year = df_s[df_s["Fecha"].dt.year == sel_anio]
                 count_year = len(df_year)
-                # 2. Contador MENSUAL
                 df_month = df_year[df_year["Fecha"].dt.month == mes_idx]
                 count_month = len(df_month)
                 m1, m2 = st.columns(2)
@@ -464,6 +452,7 @@ else:
                         df_f_save["Series"] = df_f_save["_Series_Original"]
                         df_f_save["Reps"] = df_f_save["_Reps_Original"]
                     guardar_rutina_actualizada(alias, d_hoy, ed_c_alumno, df_f_save, ed_ca_alumno)
+                    st.cache_data.clear()
                     st.success("✅ Notas guardadas"); st.rerun()
 
                 st.markdown("---")
@@ -478,13 +467,19 @@ else:
                         n = st.text_area("Notas")
                         if st.form_submit_button("GUARDAR"):
                             guardar_registro(alias, ej, k, reps, rpe, n)
+                            st.cache_data.clear()
                             st.success("Listo")
 
                 c1, c2 = st.columns(2)
                 with c1: 
-                    if st.button("✅ LISTO", type="primary", use_container_width=True): guardar_estado_sesion(alias, "Completado"); st.balloons()
+                    if st.button("✅ LISTO", type="primary", use_container_width=True): 
+                        guardar_estado_sesion(alias, "Completado")
+                        st.cache_data.clear()
+                        st.balloons()
                 with c2: 
-                    if st.button("⚠️ INCOMPLETO", use_container_width=True): guardar_estado_sesion(alias, "Incompleto")
+                    if st.button("⚠️ INCOMPLETO", use_container_width=True): 
+                        guardar_estado_sesion(alias, "Incompleto")
+                        st.cache_data.clear()
             else: st.info("No tienes rutina cargada.")
         
         with t2:
@@ -498,10 +493,8 @@ else:
             mes_idx_al = MESES_ESP.index(sel_mes_al)
             
             if not dfs.empty:
-                # 1. Contador ANUAL
                 df_year = dfs[dfs["Fecha"].dt.year == sel_anio_al]
                 count_year = len(df_year)
-                # 2. Contador MENSUAL
                 df_month = df_year[df_year["Fecha"].dt.month == mes_idx_al]
                 count_month = len(df_month)
                 m1, m2 = st.columns(2)
