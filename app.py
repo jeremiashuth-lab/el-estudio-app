@@ -73,13 +73,11 @@ def conectar_google_sheet():
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return gspread.authorize(creds).open("El Estudio DB")
 
-# --- FUNCIONES DE LECTURA ---
+# --- FUNCIONES DE LECTURA (NORMALIZADAS) ---
 @st.cache_data(ttl=600)
 def obtener_todos_usuarios():
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
-    # --- FIX CRÍTICO: LIMPIEZA DE DATOS ---
-    # Convertimos todo a minusculas y quitamos espacios para evitar errores de tipeo
     if "Rol" in df.columns:
         df["Rol"] = df["Rol"].astype(str).str.strip().str.lower()
     if "Usuario" in df.columns:
@@ -91,20 +89,30 @@ def leer_rutina(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Rutinas").get_all_records())
     if df.empty: return df
-    df["Alumno"] = df["Alumno"].astype(str).str.strip()
+    
+    # Normalización para búsqueda insensible a mayúsculas
+    df["Alumno_Norm"] = df["Alumno"].astype(str).str.strip().str.lower()
+    alumno_norm = alumno.strip().lower()
+    
     df["Seccion"] = df["Seccion"].astype(str).str.strip().str.capitalize()
     if "Link" not in df.columns: df["Link"] = ""
     if "Series" in df.columns: df["Series"] = df["Series"].astype(str)
     if "Reps" in df.columns: df["Reps"] = df["Reps"].astype(str)
     if "Kg" in df.columns: df["Kg"] = df["Kg"].astype(str)
-    return df[df["Alumno"] == alumno.strip()]
+    
+    return df[df["Alumno_Norm"] == alumno_norm].drop(columns=["Alumno_Norm"])
 
 @st.cache_data(ttl=600)
 def leer_sesiones_alumno(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Sesiones").get_all_records())
     if df.empty: return df
-    df_alumno = df[df["Usuario"].astype(str).str.strip() == alumno.strip()].copy()
+    
+    # Normalización
+    df["Usuario_Norm"] = df["Usuario"].astype(str).str.strip().str.lower()
+    alumno_norm = alumno.strip().lower()
+    
+    df_alumno = df[df["Usuario_Norm"] == alumno_norm].copy()
     if not df_alumno.empty:
         df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed').dt.normalize()
     return df_alumno
@@ -115,27 +123,41 @@ def leer_registros_alumno(alumno):
     raw_data = sh.worksheet("Registros").get_all_records()
     df = pd.DataFrame(raw_data)
     if df.empty: return df
-    df_alumno = df[df["Usuario"].astype(str).str.strip() == alumno.strip()].copy()
+    
+    # Normalización estricta para encontrar al alumno
+    df["Usuario_Norm"] = df["Usuario"].astype(str).str.strip().str.lower()
+    alumno_norm = alumno.strip().lower()
+    
+    df_alumno = df[df["Usuario_Norm"] == alumno_norm].copy()
+    
     if not df_alumno.empty:
         df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed', errors='coerce').dt.normalize()
+        # Limpieza de Fechas nulas
+        df_alumno = df_alumno.dropna(subset=["Fecha"])
+        
         def extraer_numero(texto):
             try:
                 match = re.search(r"(\d+[.,]?\d*)", str(texto))
                 return float(match.group(1).replace(",", ".")) if match else 0.0
             except: return 0.0
+            
         if "Peso" in df_alumno.columns:
             df_alumno["Peso_Grafico"] = df_alumno["Peso"].apply(extraer_numero)
         else:
             df_alumno["Peso_Grafico"] = 0.0
+            
     return df_alumno
 
 # --- FUNCIONES DE ESCRITURA ---
 def obtener_usuario(usuario_input, password_input):
     try:
         df = obtener_todos_usuarios()
-        # Buscamos normalizando inputs
+        # Busqueda case-insensitive para el usuario
+        u_input = usuario_input.strip().lower()
+        df["User_Lower"] = df["Usuario"].astype(str).str.strip().str.lower()
+        
         usuario = df[
-            (df["Usuario"] == usuario_input.strip()) & 
+            (df["User_Lower"] == u_input) & 
             (df["Password"].astype(str).str.strip() == password_input.strip())
         ]
         return usuario.iloc[0] if not usuario.empty else None
@@ -144,7 +166,10 @@ def obtener_usuario(usuario_input, password_input):
 def obtener_usuario_por_cookie(usuario_input):
     try:
         df = obtener_todos_usuarios()
-        usuario = df[df["Usuario"] == usuario_input.strip()]
+        u_input = usuario_input.strip().lower()
+        df["User_Lower"] = df["Usuario"].astype(str).str.strip().str.lower()
+        
+        usuario = df[df["User_Lower"] == u_input]
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
 
@@ -197,11 +222,16 @@ def guardar_rutina_actualizada(alumno, dia, df_calentamiento, df_fuerza, df_card
         return
 
     df_old = pd.DataFrame(all_data)
-    df_old["Alumno"] = df_old["Alumno"].astype(str).str.strip()
-    df_old["Dia"] = df_old["Dia"].astype(str).str.strip()
+    # Limpieza robusta antes de filtrar
+    df_old["Alumno_Norm"] = df_old["Alumno"].astype(str).str.strip().str.lower()
+    df_old["Dia_Norm"] = df_old["Dia"].astype(str).str.strip().str.lower()
     
-    mask = ~((df_old["Alumno"] == alumno) & (df_old["Dia"] == dia))
-    df_clean = df_old[mask]
+    a_norm = alumno.strip().lower()
+    d_norm = dia.strip().lower()
+    
+    mask = ~((df_old["Alumno_Norm"] == a_norm) & (df_old["Dia_Norm"] == d_norm))
+    # Eliminamos las columnas temporales de normalización
+    df_clean = df_old[mask].drop(columns=["Alumno_Norm", "Dia_Norm"], errors='ignore')
     
     df_nuevas = pd.DataFrame(nuevas_filas)
     df_final = pd.concat([df_clean, df_nuevas], ignore_index=True)
@@ -344,7 +374,6 @@ else:
         st.title("PANEL DE CONTROL")
         tab1, tab2 = st.tabs(["DISEÑO", "ESTADÍSTICAS"])
         with tab1:
-            # BOTON REFRESCAR USUARIOS:
             c1, c2, c3 = st.columns([3, 3, 1]) 
             with c3: 
                 st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
@@ -353,7 +382,6 @@ else:
                     st.rerun()
             
             us = obtener_todos_usuarios()
-            # Filtro normalizado
             als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
             
             with c1: alu = st.selectbox("ALUMNO", als)
@@ -361,7 +389,6 @@ else:
             
             rut = leer_rutina(alu)
             
-            # Columns
             cols_c = ["Ejercicio", "Link", "Series", "Reps", "Notas"]
             cols_f = ["Orden", "Ejercicio", "Link", "Series", "Reps", "Kg", "Notas"]
             cols_ca = ["Ejercicio", "Link", "Series", "Reps", "Notas"]
@@ -496,7 +523,7 @@ else:
                 ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
                 if not ca.empty: 
                     st.markdown("### 🏃‍♂️ Cardio")
-                    ed_ca_alumno = st.data_editor(ca[["Ejercicio", "Link", "Series", "Reps", "Notas"]], column_config={"Series":st.column_config.TextColumn("Tiempo/Dist"), "Reps":st.column_config.TextColumn("Intensidad"), "Ejercicio":st.column_config.TextColumn(disabled=True), "Link": cfg_link}, hide_index=True, use_container_width=True, key=f"car_alu_{d_hoy}")
+                    ed_ca_alumno = st.data_editor(ca[["Ejercicio", "Link", "Series", "Reps", "Notas"]], column_config={"Series":st.column_config.TextColumn("Tiempo/Dist"), "Reps":st.column_config.TextColumn("Intensidad", disabled=True), "Ejercicio":st.column_config.TextColumn(disabled=True), "Link": cfg_link}, hide_index=True, use_container_width=True, key=f"car_alu_{d_hoy}")
                 else: ed_ca_alumno = pd.DataFrame()
                 
                 st.markdown("<br>", unsafe_allow_html=True)
