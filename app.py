@@ -12,7 +12,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import calendar
 import extra_streamlit_components as stx
 import time
-import re # Importamos expresiones regulares para extraer numeros
+import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide")
@@ -77,7 +77,14 @@ def conectar_google_sheet():
 @st.cache_data(ttl=600)
 def obtener_todos_usuarios():
     sh = conectar_google_sheet()
-    return pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
+    df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
+    # --- FIX CRÍTICO: LIMPIEZA DE DATOS ---
+    # Convertimos todo a minusculas y quitamos espacios para evitar errores de tipeo
+    if "Rol" in df.columns:
+        df["Rol"] = df["Rol"].astype(str).str.strip().str.lower()
+    if "Usuario" in df.columns:
+        df["Usuario"] = df["Usuario"].astype(str).str.strip()
+    return df
 
 @st.cache_data(ttl=600)
 def leer_rutina(alumno):
@@ -109,38 +116,26 @@ def leer_registros_alumno(alumno):
     df = pd.DataFrame(raw_data)
     if df.empty: return df
     df_alumno = df[df["Usuario"].astype(str).str.strip() == alumno.strip()].copy()
-    
     if not df_alumno.empty:
-        # 1. Parsear Fechas
         df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed', errors='coerce').dt.normalize()
-        
-        # 2. LIMPIEZA INTELIGENTE DE PESO (Texto -> Numero)
-        # Extrae el primer número (entero o decimal) que encuentre en el texto
-        # Ejemplo: "20 kg" -> 20.0 | "aprox 12.5" -> 12.5
         def extraer_numero(texto):
             try:
-                # Busca patrones de digitos, opcionalmente con punto o coma y más digitos
                 match = re.search(r"(\d+[.,]?\d*)", str(texto))
-                if match:
-                    # Reemplaza coma por punto para que Python entienda el decimal
-                    return float(match.group(1).replace(",", "."))
-                return 0.0
-            except:
-                return 0.0
-
+                return float(match.group(1).replace(",", ".")) if match else 0.0
+            except: return 0.0
         if "Peso" in df_alumno.columns:
             df_alumno["Peso_Grafico"] = df_alumno["Peso"].apply(extraer_numero)
         else:
             df_alumno["Peso_Grafico"] = 0.0
-            
     return df_alumno
 
 # --- FUNCIONES DE ESCRITURA ---
 def obtener_usuario(usuario_input, password_input):
     try:
         df = obtener_todos_usuarios()
+        # Buscamos normalizando inputs
         usuario = df[
-            (df["Usuario"].astype(str).str.strip() == usuario_input.strip()) & 
+            (df["Usuario"] == usuario_input.strip()) & 
             (df["Password"].astype(str).str.strip() == password_input.strip())
         ]
         return usuario.iloc[0] if not usuario.empty else None
@@ -149,7 +144,7 @@ def obtener_usuario(usuario_input, password_input):
 def obtener_usuario_por_cookie(usuario_input):
     try:
         df = obtener_todos_usuarios()
-        usuario = df[df["Usuario"].astype(str).str.strip() == usuario_input.strip()]
+        usuario = df[df["Usuario"] == usuario_input.strip()]
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
 
@@ -349,11 +344,21 @@ else:
         st.title("PANEL DE CONTROL")
         tab1, tab2 = st.tabs(["DISEÑO", "ESTADÍSTICAS"])
         with tab1:
-            c1, c2 = st.columns(2)
+            # BOTON REFRESCAR USUARIOS:
+            c1, c2, c3 = st.columns([3, 3, 1]) 
+            with c3: 
+                st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+                if st.button("🔄", key="refresh_users", help="Actualizar lista de alumnos"):
+                    st.cache_data.clear()
+                    st.rerun()
+            
             us = obtener_todos_usuarios()
+            # Filtro normalizado
             als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
-            alu = c1.selectbox("ALUMNO", als)
-            dia = c2.selectbox("DÍA", ["Día 1", "Día 2", "Día 3", "Día 4"])
+            
+            with c1: alu = st.selectbox("ALUMNO", als)
+            with c2: dia = st.selectbox("DÍA", ["Día 1", "Día 2", "Día 3", "Día 4"])
+            
             rut = leer_rutina(alu)
             
             # Columns
@@ -440,20 +445,15 @@ else:
                     ej_v = st.selectbox("Ejercicio", lista_ejercicios)
                     df_plt = df_r[df_r["Ejercicio"] == ej_v].sort_values("Fecha", ascending=False)
                     st.caption("Evolución Cargas")
-                    
-                    # GRAFICO USANDO LA COLUMNA LIMPIA "Peso_Grafico"
                     st.line_chart(df_plt.set_index("Fecha")["Peso_Grafico"], color="#E63946")
-                    
                     with st.expander("📂 Ver Tabla de Datos Bruta"):
                         st.dataframe(df_plt)
-
                     st.markdown("#### 🗂️ Bitácora")
                     for idx, row in df_plt.iterrows():
                         with st.container(border=True):
                             c_date, c_data = st.columns([1, 3])
                             with c_date: st.markdown(f"**{row['Fecha'].strftime('%d/%m')}**"); st.caption(f"{row['Fecha'].year}")
                             with c_data:
-                                # Mostramos el Peso ORIGINAL (Texto)
                                 st.markdown(f"💪 **{row['Peso']}** x  **{row.get('Repeticiones',0)} reps**")
                                 st.markdown(f"🔥 RPE: {row.get('RPE', '-')}")
                                 if str(row.get('Notas', '')) != "": st.info(f"📝 {row['Notas']}")
@@ -517,7 +517,7 @@ else:
                         lista_ej = f["Ejercicio"].unique() if 'f' in locals() and not f.empty else ["Varios"]
                         ej = st.selectbox("Ejercicio", lista_ej)
                         c1, c2 = st.columns(2)
-                        k = c1.text_input("Kilos (ej: 20kg)") # Kilos como texto tambien aqui
+                        k = c1.text_input("Kilos (ej: 20kg)")
                         reps = c2.number_input("Reps", step=1, min_value=1)
                         rpe = st.slider("RPE", 1, 10)
                         n = st.text_area("Notas")
@@ -528,49 +528,3 @@ else:
                 with c2: 
                     if st.button("⚠️ INCOMPLETO", use_container_width=True): guardar_estado_sesion(alias, "Incompleto"); st.cache_data.clear()
             else: st.info("No tienes rutina cargada.")
-        
-        with t2:
-            st.markdown("### 📅 Mi Constancia")
-            dfs = leer_sesiones_alumno(alias)
-            now = datetime.now()
-            c_mes, c_anio = st.columns([2, 1])
-            sel_mes_al = c_mes.selectbox("Mes", MESES_ESP[1:], index=now.month-1, key="mes_al")
-            sel_anio_al = c_anio.number_input("Año", value=now.year, step=1, key="anio_al")
-            mes_idx_al = MESES_ESP.index(sel_mes_al)
-            if not dfs.empty:
-                df_year = dfs[dfs["Fecha"].dt.year == sel_anio_al]
-                count_year = len(df_year)
-                df_month = df_year[df_year["Fecha"].dt.month == mes_idx_al]
-                count_month = len(df_month)
-                m1, m2 = st.columns(2)
-                m1.metric(f"Entrenos {sel_mes_al}", count_month)
-                m2.metric(f"Total Año {sel_anio_al}", count_year)
-                render_calendar(sel_anio_al, mes_idx_al, dfs)
-            else: st.info("Sin datos."); render_calendar(sel_anio_al, mes_idx_al, pd.DataFrame())
-            
-            st.markdown("---")
-            st.markdown("### 📈 Historial y Notas")
-            df_r = leer_registros_alumno(alias)
-            if not df_r.empty and "Peso_Grafico" in df_r.columns:
-                 lista_ej = df_r["Ejercicio"].unique()
-                 if len(lista_ej) > 0:
-                     ej_sel = st.selectbox("Ver progreso en:", lista_ej)
-                     df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=False)
-                     st.caption("Gráfico de Peso")
-                     
-                     st.line_chart(df_plt.set_index("Fecha")["Peso_Grafico"], color="#E63946")
-                     
-                     with st.expander("📂 Ver Tabla de Datos Bruta"):
-                        st.dataframe(df_plt)
-                     
-                     st.markdown("#### 🗂️ Bitácora")
-                     for idx, row in df_plt.iterrows():
-                         with st.container(border=True):
-                             c_date, c_data = st.columns([1, 3])
-                             with c_date: st.markdown(f"**{row['Fecha'].strftime('%d/%m')}**"); st.caption(f"{row['Fecha'].year}")
-                             with c_data:
-                                 st.markdown(f"💪 **{row['Peso']}** x  **{row.get('Repeticiones',0)} reps**")
-                                 st.markdown(f"🔥 RPE: {row.get('RPE', '-')}")
-                                 if str(row.get('Notas', '')) != "": st.info(f"📝 {row['Notas']}")
-                 else: st.write("Datos insuficientes.")
-            else: st.write("Registra tus series para ver gráficos.")
