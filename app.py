@@ -73,18 +73,14 @@ def conectar_google_sheet():
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return gspread.authorize(creds).open("El Estudio DB")
 
-# --- FUNCIONES DE LECTURA (ROBUSTAS) ---
+# --- FUNCIONES DE LECTURA ---
 @st.cache_data(ttl=600)
 def obtener_todos_usuarios():
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
-    # Normalizar columnas
     df.columns = [c.strip().capitalize() for c in df.columns]
-    
-    if "Rol" in df.columns:
-        df["Rol"] = df["Rol"].astype(str).str.strip().str.lower()
-    if "Usuario" in df.columns:
-        df["Usuario"] = df["Usuario"].astype(str).str.strip()
+    if "Rol" in df.columns: df["Rol"] = df["Rol"].astype(str).str.strip().str.lower()
+    if "Usuario" in df.columns: df["Usuario"] = df["Usuario"].astype(str).str.strip()
     return df
 
 @st.cache_data(ttl=600)
@@ -92,21 +88,13 @@ def leer_rutina(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Rutinas").get_all_records())
     if df.empty: return df
-    
-    # Normalizar columnas (Primera letra mayuscula, resto minuscula)
     df.columns = [c.strip().capitalize() for c in df.columns]
-    
-    # Busqueda robusta
     df["Alumno_Norm"] = df["Alumno"].astype(str).str.strip().str.lower()
     alumno_norm = alumno.strip().lower()
-    
     df["Seccion"] = df["Seccion"].astype(str).str.strip().str.capitalize()
-    
-    # Asegurar columnas existentes
     for col in ["Link", "Series", "Reps", "Kg"]:
         if col not in df.columns: df[col] = ""
         else: df[col] = df[col].astype(str)
-        
     return df[df["Alumno_Norm"] == alumno_norm].drop(columns=["Alumno_Norm"])
 
 @st.cache_data(ttl=600)
@@ -114,15 +102,10 @@ def leer_sesiones_alumno(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Sesiones").get_all_records())
     if df.empty: return df
-    
     df.columns = [c.strip().capitalize() for c in df.columns]
-    
-    # Check si existe columna usuario
-    if "Usuario" not in df.columns: return pd.DataFrame() # Error de estructura
-    
+    if "Usuario" not in df.columns: return pd.DataFrame()
     df["Usuario_Norm"] = df["Usuario"].astype(str).str.strip().str.lower()
     alumno_norm = alumno.strip().lower()
-    
     df_alumno = df[df["Usuario_Norm"] == alumno_norm].copy()
     if not df_alumno.empty and "Fecha" in df_alumno.columns:
         df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed').dt.normalize()
@@ -130,51 +113,37 @@ def leer_sesiones_alumno(alumno):
 
 @st.cache_data(ttl=600)
 def leer_registros_full():
-    # Función auxiliar para diagnóstico: Trae TODO sin filtrar
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Registros").get_all_records())
-    if not df.empty:
-        # Normalizar cabeceras
-        df.columns = [c.strip().capitalize() for c in df.columns]
+    if not df.empty: df.columns = [c.strip().capitalize() for c in df.columns]
     return df
 
 @st.cache_data(ttl=600)
 def leer_registros_alumno(alumno):
     df = leer_registros_full()
     if df.empty: return df
-    
-    # Mapeo de columnas flexible (Por si se llama 'User' o 'Alumno' en vez de 'Usuario')
     col_map = {c: c for c in df.columns}
     for c in df.columns:
-        if c.lower() in ['user', 'alumno', 'student']: col_map[c] = 'Usuario'
+        if c.lower() in ['user', 'alumno']: col_map[c] = 'Usuario'
         if c.lower() in ['date', 'day']: col_map[c] = 'Fecha'
-        if c.lower() in ['exercise', 'ejer']: col_map[c] = 'Ejercicio'
-        if c.lower() in ['weight', 'kilos']: col_map[c] = 'Peso'
-    
     df = df.rename(columns=col_map)
-    
-    if "Usuario" not in df.columns: return pd.DataFrame() # No se encontró la columna
+    if "Usuario" not in df.columns: return pd.DataFrame()
     
     df["Usuario_Norm"] = df["Usuario"].astype(str).str.strip().str.lower()
     alumno_norm = alumno.strip().lower()
-    
     df_alumno = df[df["Usuario_Norm"] == alumno_norm].copy()
     
     if not df_alumno.empty and "Fecha" in df_alumno.columns:
         df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed', errors='coerce').dt.normalize()
         df_alumno = df_alumno.dropna(subset=["Fecha"])
-        
         def extraer_numero(texto):
             try:
                 match = re.search(r"(\d+[.,]?\d*)", str(texto))
                 return float(match.group(1).replace(",", ".")) if match else 0.0
             except: return 0.0
-            
         if "Peso" in df_alumno.columns:
             df_alumno["Peso_Grafico"] = df_alumno["Peso"].apply(extraer_numero)
-        else:
-            df_alumno["Peso_Grafico"] = 0.0
-            
+        else: df_alumno["Peso_Grafico"] = 0.0
     return df_alumno
 
 # --- FUNCIONES DE ESCRITURA ---
@@ -182,14 +151,9 @@ def obtener_usuario(usuario_input, password_input):
     try:
         df = obtener_todos_usuarios()
         u_input = usuario_input.strip().lower()
-        # Aseguramos que Usuario existe
         if "Usuario" not in df.columns: return None
-        
         df["User_Lower"] = df["Usuario"].astype(str).str.strip().str.lower()
-        usuario = df[
-            (df["User_Lower"] == u_input) & 
-            (df["Password"].astype(str).str.strip() == password_input.strip())
-        ]
+        usuario = df[(df["User_Lower"] == u_input) & (df["Password"].astype(str).str.strip() == password_input.strip())]
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
 
@@ -208,40 +172,21 @@ def guardar_rutina_actualizada(alumno, dia, df_calentamiento, df_fuerza, df_card
     ws = sh.worksheet("Rutinas")
     all_data = ws.get_all_records()
     cols = ["Alumno", "Dia", "Seccion", "Orden", "Ejercicio", "Link", "Series", "Reps", "Kg", "Notas"]
-
     nuevas_filas = []
-    
     def get_val(row, key): return str(row.get(key, "")).strip()
-
     df_calentamiento = df_calentamiento.fillna("")
     df_fuerza = df_fuerza.fillna("")
     df_cardio = df_cardio.fillna("")
 
     for _, row in df_calentamiento.iterrows():
         if row["Ejercicio"] or row["Notas"]: 
-             nuevas_filas.append({
-                 "Alumno": alumno, "Dia": dia, "Seccion": "Calentamiento", "Orden": "-", 
-                 "Ejercicio": row["Ejercicio"], "Link": get_val(row, "Link"), 
-                 "Series": get_val(row, "Series"), "Reps": get_val(row, "Reps"), 
-                 "Kg": "-", "Notas": row["Notas"]
-             })
+             nuevas_filas.append({"Alumno": alumno, "Dia": dia, "Seccion": "Calentamiento", "Orden": "-", "Ejercicio": row["Ejercicio"], "Link": get_val(row, "Link"), "Series": get_val(row, "Series"), "Reps": get_val(row, "Reps"), "Kg": "-", "Notas": row["Notas"]})
     for _, row in df_fuerza.iterrows():
         if row["Ejercicio"] or row["Notas"] or row["Orden"]:
-            nuevas_filas.append({
-                "Alumno": alumno, "Dia": dia, "Seccion": "Fuerza", 
-                "Orden": row.get("Orden", "-"), "Ejercicio": row["Ejercicio"], 
-                "Link": get_val(row, "Link"),
-                "Series": get_val(row, "Series"), "Reps": get_val(row, "Reps"), 
-                "Kg": get_val(row, "Kg"), "Notas": row["Notas"]
-            })
+            nuevas_filas.append({"Alumno": alumno, "Dia": dia, "Seccion": "Fuerza", "Orden": row.get("Orden", "-"), "Ejercicio": row["Ejercicio"], "Link": get_val(row, "Link"), "Series": get_val(row, "Series"), "Reps": get_val(row, "Reps"), "Kg": get_val(row, "Kg"), "Notas": row["Notas"]})
     for _, row in df_cardio.iterrows():
         if row["Ejercicio"] or row["Notas"]:
-            nuevas_filas.append({
-                "Alumno": alumno, "Dia": dia, "Seccion": "Cardio", "Orden": "-", 
-                "Ejercicio": row["Ejercicio"], "Link": get_val(row, "Link"),
-                "Series": get_val(row, "Series"), "Reps": get_val(row, "Reps"), 
-                "Kg": "-", "Notas": row["Notas"]
-            })
+            nuevas_filas.append({"Alumno": alumno, "Dia": dia, "Seccion": "Cardio", "Orden": "-", "Ejercicio": row["Ejercicio"], "Link": get_val(row, "Link"), "Series": get_val(row, "Series"), "Reps": get_val(row, "Reps"), "Kg": "-", "Notas": row["Notas"]})
 
     if not all_data:
         df_final = pd.DataFrame(nuevas_filas)
@@ -252,55 +197,101 @@ def guardar_rutina_actualizada(alumno, dia, df_calentamiento, df_fuerza, df_card
         return
 
     df_old = pd.DataFrame(all_data)
-    # Normalización para filtrado
     df_old.columns = [c.strip().capitalize() for c in df_old.columns]
-    
-    if "Alumno" in df_old.columns:
-        df_old["Alumno_Norm"] = df_old["Alumno"].astype(str).str.strip().str.lower()
-    else: df_old["Alumno_Norm"] = "" # Fallback
-    
-    if "Dia" in df_old.columns:
-        df_old["Dia_Norm"] = df_old["Dia"].astype(str).str.strip().str.lower()
+    if "Alumno" in df_old.columns: df_old["Alumno_Norm"] = df_old["Alumno"].astype(str).str.strip().str.lower()
+    else: df_old["Alumno_Norm"] = ""
+    if "Dia" in df_old.columns: df_old["Dia_Norm"] = df_old["Dia"].astype(str).str.strip().str.lower()
     else: df_old["Dia_Norm"] = ""
-
     a_norm = alumno.strip().lower()
     d_norm = dia.strip().lower()
-    
     mask = ~((df_old["Alumno_Norm"] == a_norm) & (df_old["Dia_Norm"] == d_norm))
     df_clean = df_old[mask].drop(columns=["Alumno_Norm", "Dia_Norm"], errors='ignore')
-    
     df_nuevas = pd.DataFrame(nuevas_filas)
     df_final = pd.concat([df_clean, df_nuevas], ignore_index=True)
     df_final = df_final.fillna("")
-    
-    # Asegurar orden
-    final_cols = [c for c in cols if c in df_final.columns]
-    # Si falta alguna columna obligatoria, la agregamos
-    for c in cols:
+    for c in cols: 
         if c not in df_final.columns: df_final[c] = ""
-        
-    df_final = df_final[cols]
+    ws.clear(); ws.update([df_final[cols].columns.values.tolist()] + df_final[cols].values.tolist())
+
+# --- NUEVA FUNCIÓN PARA PERMITIR ELEGIR FECHA ---
+def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=None):
+    sh = conectar_google_sheet()
+    if fecha_input:
+        fecha = fecha_input.strftime("%Y-%m-%d")
+    else:
+        fecha = datetime.now().strftime("%Y-%m-%d") 
+    sh.worksheet("Registros").append_row([fecha, usuario, ejercicio, peso, reps, rpe, notas])
+
+# --- NUEVA FUNCIÓN PARA ACTUALIZAR HISTORIAL COMPLETO (BORRAR/EDITAR) ---
+def actualizar_registros_usuario(usuario, df_editado):
+    sh = conectar_google_sheet()
+    ws = sh.worksheet("Registros")
+    all_data = ws.get_all_records()
+    df_all = pd.DataFrame(all_data)
+    if df_all.empty: return # No hay nada que actualizar
     
+    # Normalizamos columnas
+    df_all.columns = [c.strip().capitalize() for c in df_all.columns]
+    col_map = {c: c for c in df_all.columns}
+    for c in df_all.columns:
+        if c.lower() in ['user', 'alumno']: col_map[c] = 'Usuario'
+    df_all = df_all.rename(columns=col_map)
+
+    # Filtramos para quedarnos con los registros DE OTROS usuarios
+    df_all["Usuario_Norm"] = df_all["Usuario"].astype(str).str.strip().str.lower()
+    usuario_norm = usuario.strip().lower()
+    df_otros = df_all[df_all["Usuario_Norm"] != usuario_norm].drop(columns=["Usuario_Norm"])
+    
+    # Preparamos los registros DEL USUARIO actual (desde la edición)
+    # Nos aseguramos que el df_editado tenga las columnas correctas
+    cols_necesarias = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
+    # Mapeo simple por si las columnas cambiaron en el editor
+    df_usuario_nuevo = df_editado.copy()
+    # Aseguramos formato fecha string
+    if "Fecha" in df_usuario_nuevo.columns:
+        df_usuario_nuevo["Fecha"] = pd.to_datetime(df_usuario_nuevo["Fecha"]).dt.strftime("%Y-%m-%d")
+    
+    # Concatenamos
+    df_final = pd.concat([df_otros, df_usuario_nuevo], ignore_index=True)
+    df_final = df_final.fillna("")
+    
+    # Ordenar por fecha es opcional pero recomendado
+    if "Fecha" in df_final.columns:
+        df_final = df_final.sort_values("Fecha", ascending=True)
+
     ws.clear()
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
 
-def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas):
-    sh = conectar_google_sheet()
-    fecha = datetime.now().strftime("%Y-%m-%d") 
-    # Siempre Capitalize en headers si no existen, pero append_row va al final
-    sh.worksheet("Registros").append_row([fecha, usuario, ejercicio, peso, reps, rpe, notas])
-
+# --- FUNCIÓN MEJORADA PARA EVITAR DUPLICADOS DE SESIÓN ---
 def guardar_estado_sesion(usuario, estado):
     sh = conectar_google_sheet()
-    fecha = datetime.now().strftime("%Y-%m-%d")
-    sh.worksheet("Sesiones").append_row([fecha, usuario, estado])
+    ws = sh.worksheet("Sesiones")
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    
+    # Leemos para ver si ya existe registro hoy
+    records = ws.get_all_records()
+    df = pd.DataFrame(records)
+    
+    ya_registrado = False
+    if not df.empty:
+        df.columns = [c.strip().capitalize() for c in df.columns]
+        # Normalizamos
+        df["Usuario_Norm"] = df["Usuario"].astype(str).str.strip().str.lower()
+        usuario_norm = usuario.strip().lower()
+        # Convertimos fecha a string y normalizamos
+        df["Fecha_Str"] = pd.to_datetime(df["Fecha"], format='mixed').dt.strftime("%Y-%m-%d")
+        
+        filtro = (df["Usuario_Norm"] == usuario_norm) & (df["Fecha_Str"] == fecha_hoy)
+        if filtro.any():
+            ya_registrado = True
+            
+    if not ya_registrado:
+        ws.append_row([fecha_hoy, usuario, estado])
 
 def preparar_df_editor(df_input, columnas, filas_minimas=4):
-    if df_input.empty:
-        df_input = pd.DataFrame(columns=columnas)
+    if df_input.empty: df_input = pd.DataFrame(columns=columnas)
     for c in ["Series", "Reps", "Kg"]:
         if c in df_input.columns: df_input[c] = df_input[c].astype(str)
-    
     filas_actuales = len(df_input)
     if filas_actuales < filas_minimas:
         filas_a_agregar = filas_minimas - filas_actuales
@@ -308,7 +299,6 @@ def preparar_df_editor(df_input, columnas, filas_minimas=4):
         df_input = pd.concat([df_input, empty_rows], ignore_index=True)
     return df_input
 
-# --- GENERADOR DE WORD ---
 def generar_word(alumno, df_rutina):
     doc = Document()
     p_titulo = doc.add_heading(f'RUTINA DE ENTRENAMIENTO: {alumno.upper()}', 0)
@@ -320,7 +310,6 @@ def generar_word(alumno, df_rutina):
         doc.add_heading(dia, level=1)
         rutina_dia = df_rutina[df_rutina["Dia"] == dia]
         def format_link(link): return str(link) if link and str(link).strip() != "" else "-"
-        
         c = rutina_dia[rutina_dia["Seccion"] == "Calentamiento"]
         if not c.empty:
             doc.add_heading('🔥 Entrada en Calor', level=2)
@@ -329,7 +318,6 @@ def generar_word(alumno, df_rutina):
             for _, row in c.iterrows():
                 cells = table.add_row().cells; cells[0].text=str(row["Ejercicio"]); cells[1].text=f"{row.get('Series','')} x {row.get('Reps','')}"; cells[2].text=format_link(row.get("Link", "")); cells[3].text=str(row["Notas"])
         doc.add_paragraph("")
-        
         f = rutina_dia[rutina_dia["Seccion"] == "Fuerza"]
         if not f.empty:
             doc.add_heading('🏋️‍♂️ Fuerza', level=2)
@@ -341,7 +329,6 @@ def generar_word(alumno, df_rutina):
                 cells[0].text = f"{o}. {e}" if o and o != "-" else e
                 cells[1].text = f"{row.get('Series','')} x {row.get('Reps','')}"; cells[2].text = str(row.get("Kg", "")); cells[3].text = format_link(row.get("Link", "")); cells[4].text = str(row["Notas"])
         doc.add_paragraph("")
-        
         ca = rutina_dia[rutina_dia["Seccion"] == "Cardio"]
         if not ca.empty:
             doc.add_heading('🏃‍♂️ Cardio', level=2)
@@ -374,7 +361,6 @@ def render_calendar(year, month, df_sesiones):
     st.markdown(html, unsafe_allow_html=True)
 
 cookie_manager = stx.CookieManager(key="login_cookies")
-
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 
 if not st.session_state['logueado']:
@@ -405,9 +391,7 @@ else:
     with st.sidebar:
         st.markdown(f"## {nombre.upper()}"); st.caption(f"ROL: {rol.upper()}")
         st.markdown("---")
-        if st.button("🔴 LIMPIAR CACHÉ", help="Si no ves datos nuevos, presiona aquí", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
+        if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): st.cache_data.clear(); st.rerun()
         if st.button("SALIR", use_container_width=True):
             try: cookie_manager.delete("gym_user")
             except: pass
@@ -420,69 +404,48 @@ else:
             c1, c2, c3 = st.columns([3, 3, 1]) 
             with c3: 
                 st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-                if st.button("🔄", key="refresh_users", help="Actualizar lista"):
-                    st.cache_data.clear(); st.rerun()
-            
+                if st.button("🔄", key="refresh_users"): st.cache_data.clear(); st.rerun()
             us = obtener_todos_usuarios()
             als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
-            
             with c1: alu = st.selectbox("ALUMNO", als)
             with c2: dia = st.selectbox("DÍA", ["Día 1", "Día 2", "Día 3", "Día 4"])
-            
             rut = leer_rutina(alu)
             
             cols_c = ["Ejercicio", "Link", "Series", "Reps", "Notas"]
             cols_f = ["Orden", "Ejercicio", "Link", "Series", "Reps", "Kg", "Notas"]
             cols_ca = ["Ejercicio", "Link", "Series", "Reps", "Notas"]
-
             d_cal, d_fue, d_car = pd.DataFrame(columns=cols_c), pd.DataFrame(columns=cols_f), pd.DataFrame(columns=cols_ca)
-
             if not rut.empty:
                 r_dia = rut[rut["Dia"] == dia]
                 if not r_dia.empty:
                     c = r_dia[r_dia["Seccion"] == "Calentamiento"]
                     if not c.empty: d_cal = c[cols_c]
                     f = r_dia[r_dia["Seccion"] == "Fuerza"]
-                    if not f.empty: 
-                        d_fue = f[cols_f]
-                        d_fue["Kg"] = d_fue["Kg"].astype(str)
+                    if not f.empty: d_fue = f[cols_f]; d_fue["Kg"] = d_fue["Kg"].astype(str)
                     ca = r_dia[r_dia["Seccion"] == "Cardio"]
                     if not ca.empty: d_car = ca[cols_ca]
-            
             d_cal = preparar_df_editor(d_cal, cols_c, filas_minimas=4)
             d_fue = preparar_df_editor(d_fue, cols_f, filas_minimas=8)
             d_car = preparar_df_editor(d_car, cols_ca, filas_minimas=3)
-
+            
             st.markdown("---")
-            st.info("""
-            💡 **Tips de Edición:**
-            * ↩️ **Deshacer:** Usa `Ctrl + Z` en tu teclado.
-            * 📋 **Copiar/Pegar:** `Ctrl + C` para copiar y `Ctrl + V` para pegar.
-            """)
-
             with st.container(border=True):
                 col_link = st.column_config.LinkColumn("Link", display_text="🔗 Video")
                 col_text = st.column_config.TextColumn()
-                
                 st.caption("CALENTAMIENTO")
                 ed_c = st.data_editor(d_cal, num_rows="dynamic", use_container_width=True, key=f"c_{alu}_{dia}", column_config={"Link": col_link, "Series": col_text, "Reps": col_text})
                 st.caption("FUERZA")
                 ed_f = st.data_editor(d_fue, num_rows="dynamic", use_container_width=True, height=400, key=f"f_{alu}_{dia}", column_config={"Kg": col_text, "Link": col_link, "Series": col_text, "Reps": col_text})
                 st.caption("CARDIO")
                 ed_ca = st.data_editor(d_car, num_rows="dynamic", use_container_width=True, key=f"ca_{alu}_{dia}", column_config={"Series": st.column_config.TextColumn("Tiempo/Dist"), "Reps": st.column_config.TextColumn("Intensidad"), "Link": col_link})
-            
             c_g, c_r, c_d = st.columns([1, 1, 1])
             with c_g:
                 if st.button("💾 GUARDAR", type="primary", use_container_width=True):
-                    guardar_rutina_actualizada(alu, dia, ed_c, ed_f, ed_ca)
-                    st.cache_data.clear()
-                    st.success("Guardado correctamente."); st.rerun()
+                    guardar_rutina_actualizada(alu, dia, ed_c, ed_f, ed_ca); st.cache_data.clear(); st.success("Guardado."); st.rerun()
             with c_r:
-                 if st.button("🔄 RECARGAR / CANCELAR", use_container_width=True):
-                    st.cache_data.clear(); st.rerun()
+                 if st.button("🔄 RECARGAR", use_container_width=True): st.cache_data.clear(); st.rerun()
             with c_d:
-                if not rut.empty:
-                    st.download_button("📥 WORD", generar_word(alu, rut), f"{alu}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                if not rut.empty: st.download_button("📥 WORD", generar_word(alu, rut), f"{alu}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
 
         with tab2:
             us = obtener_todos_usuarios()
@@ -497,53 +460,49 @@ else:
             mes_idx = MESES_ESP.index(sel_mes)
             if not df_s.empty:
                 df_year = df_s[df_s["Fecha"].dt.year == sel_anio]
-                count_year = len(df_year)
+                # CORRECCIÓN DE CONTEO: CONTAR DÍAS ÚNICOS (nunique) NO FILAS (len)
+                count_year = df_year["Fecha"].dt.date.nunique()
+                
                 df_month = df_year[df_year["Fecha"].dt.month == mes_idx]
-                count_month = len(df_month)
+                count_month = df_month["Fecha"].dt.date.nunique()
+                
                 m1, m2 = st.columns(2)
                 m1.metric(f"Total {sel_mes}", count_month)
                 m2.metric(f"Total Año {sel_anio}", count_year)
                 render_calendar(sel_anio, mes_idx, df_s)
             else: st.info("Sin datos."); render_calendar(sel_anio, mes_idx, pd.DataFrame())
             st.markdown("---")
-            st.markdown("### 📈 Historial")
+            st.markdown("### 📈 Historial y Edición")
             df_r = leer_registros_alumno(alu_s)
             
-            # --- PANEL DE DIAGNÓSTICO PARA EL ADMIN ---
-            with st.expander("🕵️‍♂️ DIAGNÓSTICO (Si no ves datos, abre aquí)"):
-                df_full = leer_registros_full()
-                st.write(f"**Total de registros en DB:** {len(df_full)}")
-                if not df_full.empty:
-                    st.write("**Columnas encontradas:**", df_full.columns.tolist())
-                    if "Usuario" in df_full.columns:
-                        users_found = df_full["Usuario"].unique()
-                        st.write("**Usuarios encontrados en registros:**", users_found)
-                        st.write(f"**Buscando datos exactos para:** '{alu_s}'")
-                    else:
-                        st.error("⚠️ No encuentro la columna 'Usuario' en la hoja Registros. Revisa los nombres de columna en Google Sheets.")
+            # --- SECCION NUEVA: GESTIÓN DE BITÁCORA ---
+            with st.expander("📝 GESTIONAR BITÁCORA (Borrar/Editar Registros)"):
+                if not df_r.empty:
+                    st.info("Selecciona las filas y presiona 'Supr' para borrar. Edita valores y luego presiona 'ACTUALIZAR'.")
+                    # Mostramos columnas relevantes para editar, ocultamos la calculada Peso_Grafico
+                    cols_show = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
+                    # Aseguramos que existan
+                    for c in cols_show:
+                        if c not in df_r.columns: df_r[c] = ""
+                    
+                    df_to_edit = df_r[cols_show].copy()
+                    
+                    edited_df = st.data_editor(df_to_edit, num_rows="dynamic", use_container_width=True, key=f"edit_hist_{alu_s}")
+                    
+                    if st.button("💾 ACTUALIZAR HISTORIAL"):
+                        actualizar_registros_usuario(alu_s, edited_df)
+                        st.cache_data.clear()
+                        st.success("Historial actualizado correctamente.")
+                        st.rerun()
                 else:
-                    st.warning("⚠️ La hoja de 'Registros' parece estar vacía.")
+                    st.warning("No hay registros para editar.")
 
             if not df_r.empty and "Peso_Grafico" in df_r.columns:
                 lista_ejercicios = df_r["Ejercicio"].unique()
                 if len(lista_ejercicios) > 0:
                     ej_v = st.selectbox("Ejercicio", lista_ejercicios)
                     df_plt = df_r[df_r["Ejercicio"] == ej_v].sort_values("Fecha", ascending=False)
-                    st.caption("Evolución Cargas")
                     st.line_chart(df_plt.set_index("Fecha")["Peso_Grafico"], color="#E63946")
-                    with st.expander("📂 Ver Tabla de Datos Bruta"):
-                        st.dataframe(df_plt)
-                    st.markdown("#### 🗂️ Bitácora")
-                    for idx, row in df_plt.iterrows():
-                        with st.container(border=True):
-                            c_date, c_data = st.columns([1, 3])
-                            with c_date: st.markdown(f"**{row['Fecha'].strftime('%d/%m')}**"); st.caption(f"{row['Fecha'].year}")
-                            with c_data:
-                                st.markdown(f"💪 **{row['Peso']}** x  **{row.get('Repeticiones',0)} reps**")
-                                st.markdown(f"🔥 RPE: {row.get('RPE', '-')}")
-                                if str(row.get('Notas', '')) != "": st.info(f"📝 {row['Notas']}")
-                else: st.info("Hay registros pero sin ejercicios válidos.")
-            else: st.info("El alumno no ha registrado pesos todavía.")
     else:
         st.title(f"RUTINA DE {nombre.upper()}")
         t1, t2 = st.tabs(["ENTRENAR", "PROGRESO"])
@@ -556,13 +515,11 @@ else:
                 r_hoy = rut[rut["Dia"] == d_hoy]
                 cfg_link = st.column_config.LinkColumn("Ver Video", display_text="📺 Ver Video", width="small")
                 col_text_alu = st.column_config.TextColumn()
-                
                 c = r_hoy[r_hoy["Seccion"] == "Calentamiento"]
                 if not c.empty:
                     st.markdown("### 🔥 Entrada en Calor")
                     ed_c_alumno = st.data_editor(c[["Ejercicio", "Link", "Series", "Reps", "Notas"]], hide_index=True, use_container_width=True, disabled=["Ejercicio","Link"], key=f"cal_alu_{d_hoy}", column_config={"Link": cfg_link, "Series": col_text_alu, "Reps": col_text_alu})
                 else: ed_c_alumno = pd.DataFrame()
-                
                 f = r_hoy[r_hoy["Seccion"] == "Fuerza"]
                 if not f.empty:
                     st.markdown("### 🏋️‍♂️ Fuerza")
@@ -577,13 +534,11 @@ else:
                     f_final["_Reps_Original"] = f_display["Reps"]
                     ed_f_alumno = st.data_editor(f_final, column_order=["Ejercicio_Full", "Link", "SxR", "Kg", "Notas"], column_config={"Ejercicio_Full": st.column_config.TextColumn("Ejercicio", disabled=True), "Link": cfg_link, "SxR": st.column_config.TextColumn("SxR", disabled=True), "Kg": col_text_alu, "Notas": st.column_config.TextColumn("Notas")}, hide_index=True, use_container_width=True, key=f"fue_alu_{d_hoy}")
                 else: ed_f_alumno = pd.DataFrame()
-                
                 ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
                 if not ca.empty: 
                     st.markdown("### 🏃‍♂️ Cardio")
                     ed_ca_alumno = st.data_editor(ca[["Ejercicio", "Link", "Series", "Reps", "Notas"]], column_config={"Series":st.column_config.TextColumn("Tiempo/Dist"), "Reps":st.column_config.TextColumn("Intensidad", disabled=True), "Ejercicio":st.column_config.TextColumn(disabled=True), "Link": cfg_link}, hide_index=True, use_container_width=True, key=f"car_alu_{d_hoy}")
                 else: ed_ca_alumno = pd.DataFrame()
-                
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("💾 GUARDAR CAMBIOS RUTINA", type="primary", use_container_width=True):
                     df_f_save = pd.DataFrame()
@@ -594,26 +549,29 @@ else:
                         df_f_save["Link"] = df_f_save["_Link_Original"]
                         df_f_save["Series"] = df_f_save["_Series_Original"]
                         df_f_save["Reps"] = df_f_save["_Reps_Original"]
-                    guardar_rutina_actualizada(alias, d_hoy, ed_c_alumno, df_f_save, ed_ca_alumno)
-                    st.cache_data.clear(); st.success("✅ Notas guardadas"); st.rerun()
+                    guardar_rutina_actualizada(alias, d_hoy, ed_c_alumno, df_f_save, ed_ca_alumno); st.cache_data.clear(); st.success("✅ Notas guardadas"); st.rerun()
                 st.markdown("---")
-                with st.expander("➕ AGREGAR REGISTRO EXTRA"):
+                with st.expander("➕ AGREGAR REGISTRO EXTRA (Día Actual o Pasado)"):
                     with st.form("reg"):
                         lista_ej = f["Ejercicio"].unique() if 'f' in locals() and not f.empty else ["Varios"]
                         ej = st.selectbox("Ejercicio", lista_ej)
-                        c1, c2 = st.columns(2)
-                        k = c1.text_input("Kilos (ej: 20kg)")
-                        reps = c2.number_input("Reps", step=1, min_value=1)
-                        rpe = st.slider("RPE", 1, 10)
+                        # NUEVO: FECHA MANUAL
+                        c_date, c_k = st.columns(2)
+                        fecha_manual = c_date.date_input("Fecha", value=datetime.now())
+                        k = c_k.text_input("Kilos (ej: 20kg)")
+                        c_r, c_rp = st.columns(2)
+                        reps = c_r.number_input("Reps", step=1, min_value=1)
+                        rpe = c_rp.slider("RPE", 1, 10)
                         n = st.text_area("Notas")
-                        if st.form_submit_button("GUARDAR"): guardar_registro(alias, ej, k, reps, rpe, n); st.cache_data.clear(); st.success("Listo")
+                        if st.form_submit_button("GUARDAR REGISTRO"): 
+                            guardar_registro(alias, ej, k, reps, rpe, n, fecha_manual)
+                            st.cache_data.clear(); st.success("Listo")
                 c1, c2 = st.columns(2)
                 with c1: 
                     if st.button("✅ LISTO", type="primary", use_container_width=True): guardar_estado_sesion(alias, "Completado"); st.cache_data.clear(); st.balloons()
                 with c2: 
                     if st.button("⚠️ INCOMPLETO", use_container_width=True): guardar_estado_sesion(alias, "Incompleto"); st.cache_data.clear()
             else: st.info("No tienes rutina cargada.")
-        
         with t2:
             st.markdown("### 📅 Mi Constancia")
             dfs = leer_sesiones_alumno(alias)
@@ -624,24 +582,36 @@ else:
             mes_idx_al = MESES_ESP.index(sel_mes_al)
             if not dfs.empty:
                 df_year = dfs[dfs["Fecha"].dt.year == sel_anio_al]
-                count_year = len(df_year)
+                # CORRECCIÓN DE MÉTRICA ALUMNO:
+                count_year = df_year["Fecha"].dt.date.nunique()
+                
                 df_month = df_year[df_year["Fecha"].dt.month == mes_idx_al]
-                count_month = len(df_month)
+                count_month = df_month["Fecha"].dt.date.nunique()
+                
                 m1, m2 = st.columns(2)
                 m1.metric(f"Entrenos {sel_mes_al}", count_month)
                 m2.metric(f"Total Año {sel_anio_al}", count_year)
                 render_calendar(sel_anio_al, mes_idx_al, dfs)
             else: st.info("Sin datos."); render_calendar(sel_anio_al, mes_idx_al, pd.DataFrame())
-            
             st.markdown("---")
             st.markdown("### 📈 Historial y Notas")
             df_r = leer_registros_alumno(alias)
             
-            # --- DIAGNÓSTICO ALUMNO (Oculto pero util para debug remoto) ---
-            # Si quieres que el alumno vea por que no ve datos, descomenta esto:
-            # with st.expander("¿No ves tus datos? Click aquí"):
-            #    st.write(f"Tu usuario es: {alias}")
-            #    st.write(f"Registros encontrados: {len(df_r)}")
+            # --- SECCION NUEVA ALUMNO: GESTIÓN DE BITÁCORA ---
+            with st.expander("📝 CORREGIR MIS REGISTROS"):
+                if not df_r.empty:
+                    st.caption("Si te equivocaste, corrige el valor aquí y presiona ACTUALIZAR.")
+                    cols_show = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
+                    # Asegurar columnas
+                    for c in cols_show: 
+                         if c not in df_r.columns: df_r[c] = ""
+                    
+                    df_to_edit_al = df_r[cols_show].copy()
+                    edited_df_al = st.data_editor(df_to_edit_al, num_rows="dynamic", use_container_width=True, key=f"edit_hist_al_{alias}")
+                    
+                    if st.button("💾 ACTUALIZAR MIS REGISTROS"):
+                        actualizar_registros_usuario(alias, edited_df_al)
+                        st.cache_data.clear(); st.success("Corregido."); st.rerun()
 
             if not df_r.empty and "Peso_Grafico" in df_r.columns:
                  lista_ej = df_r["Ejercicio"].unique()
@@ -650,8 +620,6 @@ else:
                      df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=False)
                      st.caption("Gráfico de Peso")
                      st.line_chart(df_plt.set_index("Fecha")["Peso_Grafico"], color="#E63946")
-                     with st.expander("📂 Ver Tabla de Datos Bruta"):
-                        st.dataframe(df_plt)
                      st.markdown("#### 🗂️ Bitácora")
                      for idx, row in df_plt.iterrows():
                          with st.container(border=True):
