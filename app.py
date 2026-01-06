@@ -329,7 +329,6 @@ def generar_word(alumno, df_rutina):
         doc.add_page_break()
     b = BytesIO(); doc.save(b); b.seek(0); return b
 
-# --- FUNCIÓN CALENDARIO (RESTAURADA) ---
 def render_calendar(year, month, df_sesiones):
     cal = calendar.monthcalendar(year, month)
     month_name = MESES_ESP[month]
@@ -485,6 +484,19 @@ else:
                     ej_v = st.selectbox("Ejercicio", lista_ejercicios)
                     df_plt = df_r[df_r["Ejercicio"] == ej_v].sort_values("Fecha", ascending=False)
                     st.line_chart(df_plt.set_index("Fecha")["Peso_Grafico"], color="#E63946")
+                    
+                    st.markdown("#### 🗂️ Bitácora Visual")
+                    for idx, row in df_plt.iterrows():
+                        with st.container(border=True):
+                            c_date, c_data = st.columns([1, 3])
+                            with c_date: 
+                                st.markdown(f"**{row['Fecha'].strftime('%d/%m')}**")
+                                st.caption(f"{row['Fecha'].year}")
+                            with c_data:
+                                reps_val = row.get('Reps', row.get('Repeticiones', 0))
+                                st.markdown(f"💪 **{row['Peso']}** x  **{reps_val} reps**")
+                                st.markdown(f"🔥 RPE: {row.get('Rpe', '-')}")
+                                if str(row.get('Notas', '')) != "": st.info(f"📝 {row['Notas']}")
     else:
         st.title(f"RUTINA DE {nombre.upper()}")
         t1, t2 = st.tabs(["ENTRENAR", "PROGRESO"])
@@ -589,3 +601,16 @@ else:
                      ej_sel = st.selectbox("Ver progreso en:", lista_ej)
                      df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=False)
                      st.line_chart(df_plt.set_index("Fecha")["Peso_Grafico"], color="#E63946")
+                     
+                     st.markdown("#### 🗂️ Bitácora Visual")
+                     for idx, row in df_plt.iterrows():
+                        with st.container(border=True):
+                            c_date, c_data = st.columns([1, 3])
+                            with c_date: 
+                                st.markdown(f"**{row['Fecha'].strftime('%d/%m')}**")
+                                st.caption(f"{row['Fecha'].year}")
+                            with c_data:
+                                reps_val = row.get('Reps', row.get('Repeticiones', 0))
+                                st.markdown(f"💪 **{row['Peso']}** x  **{reps_val} reps**")
+                                st.markdown(f"🔥 RPE: {row.get('Rpe', '-')}")
+                                if str(row.get('Notas', '')) != "": st.info(f"📝 {row['Notas']}")
