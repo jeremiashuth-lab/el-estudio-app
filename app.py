@@ -20,20 +20,22 @@ st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide")
 # --- LISTA DE MESES ---
 MESES_ESP = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
-# --- ESTILOS CSS ---
+# --- ESTILOS CSS (OPTIMIZADO PARA IOS) ---
 def cargar_estilos():
     st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;800&display=swap');
         html, body, [class*="css"] { font-family: 'Montserrat', sans-serif; }
         
-        header {visibility: visible;}
+        header {visibility: hidden;}
         .stApp > header {background-color: transparent;}
         footer {visibility: hidden;}
         
+        /* Títulos */
         h1 { color: #E63946 !important; font-weight: 800 !important; letter-spacing: -1px; }
         h2, h3 { font-weight: 600 !important; letter-spacing: -0.5px; }
         
+        /* Calendario */
         .calendar-container {
             display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 10px; margin-bottom: 20px;
         }
@@ -46,16 +48,23 @@ def cargar_estilos():
         .day-incomplete { background-color: #F39C12 !important; color: #000 !important; }
         .day-empty { background-color: transparent; }
         
+        /* Métricas y Contenedores */
         div[data-testid="stExpander"] { border: none; box-shadow: none; }
         div[data-testid="stMetric"] { background-color: #1A1C24; border: 1px solid #333; padding: 10px; border-radius: 8px; }
         div[data-testid="stMetricValue"] { color: #E63946 !important; font-weight: 800; font-size: 1.8rem !important; }
         
+        /* Botones (Toque rápido en iOS) */
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 8px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
             padding-top: 12px; padding-bottom: 12px;
+            touch-action: manipulation; /* Evita zoom al doble tap */
+            -webkit-tap-highlight-color: transparent; /* Quita el gris al tocar */
         }
         div.stButton > button:first-child:hover { background-color: #FF4D5A; }
+        
+        /* Ajuste de Tablas para Móvil */
+        div[data-testid="stDataFrame"] { width: 100%; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -213,7 +222,6 @@ def guardar_rutina_actualizada(alumno, dia, df_calentamiento, df_fuerza, df_card
         if c not in df_final.columns: df_final[c] = ""
     ws.clear(); ws.update([df_final[cols].columns.values.tolist()] + df_final[cols].values.tolist())
 
-# --- NUEVA FUNCIÓN PARA PERMITIR ELEGIR FECHA ---
 def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=None):
     sh = conectar_google_sheet()
     if fecha_input:
@@ -222,69 +230,51 @@ def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=Non
         fecha = datetime.now().strftime("%Y-%m-%d") 
     sh.worksheet("Registros").append_row([fecha, usuario, ejercicio, peso, reps, rpe, notas])
 
-# --- NUEVA FUNCIÓN PARA ACTUALIZAR HISTORIAL COMPLETO (BORRAR/EDITAR) ---
 def actualizar_registros_usuario(usuario, df_editado):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Registros")
     all_data = ws.get_all_records()
     df_all = pd.DataFrame(all_data)
-    if df_all.empty: return # No hay nada que actualizar
+    if df_all.empty: return 
     
-    # Normalizamos columnas
     df_all.columns = [c.strip().capitalize() for c in df_all.columns]
     col_map = {c: c for c in df_all.columns}
     for c in df_all.columns:
         if c.lower() in ['user', 'alumno']: col_map[c] = 'Usuario'
     df_all = df_all.rename(columns=col_map)
 
-    # Filtramos para quedarnos con los registros DE OTROS usuarios
     df_all["Usuario_Norm"] = df_all["Usuario"].astype(str).str.strip().str.lower()
     usuario_norm = usuario.strip().lower()
     df_otros = df_all[df_all["Usuario_Norm"] != usuario_norm].drop(columns=["Usuario_Norm"])
     
-    # Preparamos los registros DEL USUARIO actual (desde la edición)
-    # Nos aseguramos que el df_editado tenga las columnas correctas
-    cols_necesarias = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
-    # Mapeo simple por si las columnas cambiaron en el editor
     df_usuario_nuevo = df_editado.copy()
-    # Aseguramos formato fecha string
     if "Fecha" in df_usuario_nuevo.columns:
         df_usuario_nuevo["Fecha"] = pd.to_datetime(df_usuario_nuevo["Fecha"]).dt.strftime("%Y-%m-%d")
     
-    # Concatenamos
     df_final = pd.concat([df_otros, df_usuario_nuevo], ignore_index=True)
     df_final = df_final.fillna("")
     
-    # Ordenar por fecha es opcional pero recomendado
     if "Fecha" in df_final.columns:
         df_final = df_final.sort_values("Fecha", ascending=True)
 
     ws.clear()
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
 
-# --- FUNCIÓN MEJORADA PARA EVITAR DUPLICADOS DE SESIÓN ---
 def guardar_estado_sesion(usuario, estado):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Sesiones")
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    
-    # Leemos para ver si ya existe registro hoy
     records = ws.get_all_records()
     df = pd.DataFrame(records)
-    
     ya_registrado = False
     if not df.empty:
         df.columns = [c.strip().capitalize() for c in df.columns]
-        # Normalizamos
         df["Usuario_Norm"] = df["Usuario"].astype(str).str.strip().str.lower()
         usuario_norm = usuario.strip().lower()
-        # Convertimos fecha a string y normalizamos
         df["Fecha_Str"] = pd.to_datetime(df["Fecha"], format='mixed').dt.strftime("%Y-%m-%d")
-        
         filtro = (df["Usuario_Norm"] == usuario_norm) & (df["Fecha_Str"] == fecha_hoy)
         if filtro.any():
             ya_registrado = True
-            
     if not ya_registrado:
         ws.append_row([fecha_hoy, usuario, estado])
 
@@ -360,15 +350,21 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
+# --- GESTIÓN DE COOKIES Y SESIÓN (IOS FIX) ---
 cookie_manager = stx.CookieManager(key="login_cookies")
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 
+# Si NO está logueado en memoria, intentamos cookie
 if not st.session_state['logueado']:
     try:
         time.sleep(0.1)
-        if cookie_manager.get(cookie="gym_user"):
-            user = obtener_usuario_por_cookie(cookie_manager.get(cookie="gym_user"))
-            if user is not None: st.session_state['logueado'] = True; st.session_state['usuario_info'] = user; st.rerun()
+        c_user = cookie_manager.get(cookie="gym_user")
+        if c_user:
+            user = obtener_usuario_por_cookie(c_user)
+            if user is not None:
+                st.session_state['logueado'] = True
+                st.session_state['usuario_info'] = user
+                st.rerun()
     except: pass
 
 if not st.session_state['logueado']:
@@ -460,12 +456,9 @@ else:
             mes_idx = MESES_ESP.index(sel_mes)
             if not df_s.empty:
                 df_year = df_s[df_s["Fecha"].dt.year == sel_anio]
-                # CORRECCIÓN DE CONTEO: CONTAR DÍAS ÚNICOS (nunique) NO FILAS (len)
                 count_year = df_year["Fecha"].dt.date.nunique()
-                
                 df_month = df_year[df_year["Fecha"].dt.month == mes_idx]
                 count_month = df_month["Fecha"].dt.date.nunique()
-                
                 m1, m2 = st.columns(2)
                 m1.metric(f"Total {sel_mes}", count_month)
                 m2.metric(f"Total Año {sel_anio}", count_year)
@@ -474,29 +467,18 @@ else:
             st.markdown("---")
             st.markdown("### 📈 Historial y Edición")
             df_r = leer_registros_alumno(alu_s)
-            
-            # --- SECCION NUEVA: GESTIÓN DE BITÁCORA ---
             with st.expander("📝 GESTIONAR BITÁCORA (Borrar/Editar Registros)"):
                 if not df_r.empty:
                     st.info("Selecciona las filas y presiona 'Supr' para borrar. Edita valores y luego presiona 'ACTUALIZAR'.")
-                    # Mostramos columnas relevantes para editar, ocultamos la calculada Peso_Grafico
                     cols_show = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
-                    # Aseguramos que existan
                     for c in cols_show:
                         if c not in df_r.columns: df_r[c] = ""
-                    
                     df_to_edit = df_r[cols_show].copy()
-                    
                     edited_df = st.data_editor(df_to_edit, num_rows="dynamic", use_container_width=True, key=f"edit_hist_{alu_s}")
-                    
                     if st.button("💾 ACTUALIZAR HISTORIAL"):
                         actualizar_registros_usuario(alu_s, edited_df)
-                        st.cache_data.clear()
-                        st.success("Historial actualizado correctamente.")
-                        st.rerun()
-                else:
-                    st.warning("No hay registros para editar.")
-
+                        st.cache_data.clear(); st.success("Actualizado."); st.rerun()
+                else: st.warning("No hay registros.")
             if not df_r.empty and "Peso_Grafico" in df_r.columns:
                 lista_ejercicios = df_r["Ejercicio"].unique()
                 if len(lista_ejercicios) > 0:
@@ -555,7 +537,6 @@ else:
                     with st.form("reg"):
                         lista_ej = f["Ejercicio"].unique() if 'f' in locals() and not f.empty else ["Varios"]
                         ej = st.selectbox("Ejercicio", lista_ej)
-                        # NUEVO: FECHA MANUAL
                         c_date, c_k = st.columns(2)
                         fecha_manual = c_date.date_input("Fecha", value=datetime.now())
                         k = c_k.text_input("Kilos (ej: 20kg)")
@@ -564,8 +545,7 @@ else:
                         rpe = c_rp.slider("RPE", 1, 10)
                         n = st.text_area("Notas")
                         if st.form_submit_button("GUARDAR REGISTRO"): 
-                            guardar_registro(alias, ej, k, reps, rpe, n, fecha_manual)
-                            st.cache_data.clear(); st.success("Listo")
+                            guardar_registro(alias, ej, k, reps, rpe, n, fecha_manual); st.cache_data.clear(); st.success("Listo")
                 c1, c2 = st.columns(2)
                 with c1: 
                     if st.button("✅ LISTO", type="primary", use_container_width=True): guardar_estado_sesion(alias, "Completado"); st.cache_data.clear(); st.balloons()
@@ -582,52 +562,30 @@ else:
             mes_idx_al = MESES_ESP.index(sel_mes_al)
             if not dfs.empty:
                 df_year = dfs[dfs["Fecha"].dt.year == sel_anio_al]
-                # CORRECCIÓN DE MÉTRICA ALUMNO:
                 count_year = df_year["Fecha"].dt.date.nunique()
-                
                 df_month = df_year[df_year["Fecha"].dt.month == mes_idx_al]
                 count_month = df_month["Fecha"].dt.date.nunique()
-                
                 m1, m2 = st.columns(2)
                 m1.metric(f"Entrenos {sel_mes_al}", count_month)
                 m2.metric(f"Total Año {sel_anio_al}", count_year)
                 render_calendar(sel_anio_al, mes_idx_al, dfs)
             else: st.info("Sin datos."); render_calendar(sel_anio_al, mes_idx_al, pd.DataFrame())
             st.markdown("---")
-            st.markdown("### 📈 Historial y Notas")
+            st.markdown("### 📈 Historial y Edición")
             df_r = leer_registros_alumno(alias)
-            
-            # --- SECCION NUEVA ALUMNO: GESTIÓN DE BITÁCORA ---
             with st.expander("📝 CORREGIR MIS REGISTROS"):
                 if not df_r.empty:
                     st.caption("Si te equivocaste, corrige el valor aquí y presiona ACTUALIZAR.")
                     cols_show = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
-                    # Asegurar columnas
                     for c in cols_show: 
                          if c not in df_r.columns: df_r[c] = ""
-                    
                     df_to_edit_al = df_r[cols_show].copy()
                     edited_df_al = st.data_editor(df_to_edit_al, num_rows="dynamic", use_container_width=True, key=f"edit_hist_al_{alias}")
-                    
                     if st.button("💾 ACTUALIZAR MIS REGISTROS"):
-                        actualizar_registros_usuario(alias, edited_df_al)
-                        st.cache_data.clear(); st.success("Corregido."); st.rerun()
-
+                        actualizar_registros_usuario(alias, edited_df_al); st.cache_data.clear(); st.success("Corregido."); st.rerun()
             if not df_r.empty and "Peso_Grafico" in df_r.columns:
                  lista_ej = df_r["Ejercicio"].unique()
                  if len(lista_ej) > 0:
                      ej_sel = st.selectbox("Ver progreso en:", lista_ej)
                      df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=False)
-                     st.caption("Gráfico de Peso")
                      st.line_chart(df_plt.set_index("Fecha")["Peso_Grafico"], color="#E63946")
-                     st.markdown("#### 🗂️ Bitácora")
-                     for idx, row in df_plt.iterrows():
-                         with st.container(border=True):
-                             c_date, c_data = st.columns([1, 3])
-                             with c_date: st.markdown(f"**{row['Fecha'].strftime('%d/%m')}**"); st.caption(f"{row['Fecha'].year}")
-                             with c_data:
-                                 st.markdown(f"💪 **{row['Peso']}** x  **{row.get('Repeticiones',0)} reps**")
-                                 st.markdown(f"🔥 RPE: {row.get('RPE', '-')}")
-                                 if str(row.get('Notas', '')) != "": st.info(f"📝 {row['Notas']}")
-                 else: st.write("Datos insuficientes.")
-            else: st.write("Registra tus series para ver gráficos.")
