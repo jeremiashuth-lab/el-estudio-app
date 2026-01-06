@@ -15,6 +15,7 @@ import time
 import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
+# Nota: page_icon sigue siendo el fueguito para la pestaña del navegador, queda bien.
 st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide")
 
 # --- LISTA DE MESES ---
@@ -58,13 +59,20 @@ def cargar_estilos():
             background-color: #E63946; color: white; border-radius: 8px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
             padding-top: 12px; padding-bottom: 12px;
-            touch-action: manipulation; /* Evita zoom al doble tap */
-            -webkit-tap-highlight-color: transparent; /* Quita el gris al tocar */
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
         div.stButton > button:first-child:hover { background-color: #FF4D5A; }
         
         /* Ajuste de Tablas para Móvil */
         div[data-testid="stDataFrame"] { width: 100%; }
+        
+        /* Centrar Logo */
+        [data-testid="stImage"] {
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -329,32 +337,10 @@ def generar_word(alumno, df_rutina):
         doc.add_page_break()
     b = BytesIO(); doc.save(b); b.seek(0); return b
 
-def render_calendar(year, month, df_sesiones):
-    cal = calendar.monthcalendar(year, month)
-    month_name = MESES_ESP[month]
-    asistencia_map = {}
-    if not df_sesiones.empty:
-        mask = (df_sesiones["Fecha"].dt.year == year) & (df_sesiones["Fecha"].dt.month == month)
-        df_mes = df_sesiones[mask]
-        for _, row in df_mes.iterrows(): asistencia_map[row["Fecha"].day] = row["Estado"]
-    html = f"""<div style="text-align:center; margin-bottom:10px; font-weight:bold; font-size:1.2rem; color:#E63946;">{month_name} {year}</div>
-    <div class="calendar-container"><div class="calendar-day-header">L</div><div class="calendar-day-header">M</div><div class="calendar-day-header">M</div><div class="calendar-day-header">J</div><div class="calendar-day-header">V</div><div class="calendar-day-header">S</div><div class="calendar-day-header">D</div>"""
-    for week in cal:
-        for day in week:
-            if day == 0: html += '<div class="calendar-day day-empty"></div>'
-            else:
-                css = "calendar-day"
-                if asistencia_map.get(day) == "Completado": css += " day-completed"
-                elif asistencia_map.get(day) == "Incompleto": css += " day-incomplete"
-                html += f'<div class="{css}">{day}</div>'
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
-
-# --- GESTIÓN DE COOKIES Y SESIÓN (IOS FIX) ---
+# --- GESTIÓN DE COOKIES Y SESIÓN ---
 cookie_manager = stx.CookieManager(key="login_cookies")
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 
-# Si NO está logueado en memoria, intentamos cookie
 if not st.session_state['logueado']:
     try:
         time.sleep(0.1)
@@ -370,7 +356,12 @@ if not st.session_state['logueado']:
 if not st.session_state['logueado']:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<br><br><h1 style='text-align: center;'>EL ESTUDIO 🔥</h1><br>", unsafe_allow_html=True)
+        # LOGO EN LOGIN
+        if os.path.exists("logo.png"):
+             st.image("logo.png", width=200)
+        else:
+             st.markdown("<br><br><h1 style='text-align: center;'>EL ESTUDIO 🔥</h1><br>", unsafe_allow_html=True)
+        
         with st.container(border=True):
             with st.form("login"):
                 u = st.text_input("USUARIO"); p = st.text_input("CONTRASEÑA", type="password")
@@ -385,6 +376,11 @@ else:
     datos = st.session_state['usuario_info']
     rol, nombre, alias = datos['Rol'], datos['Nombre'], datos['Usuario']
     with st.sidebar:
+        # LOGO EN SIDEBAR
+        if os.path.exists("logo.png"):
+            st.image("logo.png", use_container_width=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+            
         st.markdown(f"## {nombre.upper()}"); st.caption(f"ROL: {rol.upper()}")
         st.markdown("---")
         if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): st.cache_data.clear(); st.rerun()
