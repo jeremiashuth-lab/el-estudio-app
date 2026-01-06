@@ -1,3 +1,9 @@
+[theme]
+primaryColor = "#E63946"     # Rojo intenso (Botones y acentos)
+backgroundColor = "#0E1117"  # Negro casi puro (Fondo principal)
+secondaryBackgroundColor = "#262730" # Gris oscuro (Barra lateral y cajas)
+textColor = "#FAFAFA"        # Blanco casi puro (Texto)
+font = "sans serif"          # Fuente limpia y moderna
 [server]
 enableXsrfProtection = false
 enableCORS = false
