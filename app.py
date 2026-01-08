@@ -10,7 +10,6 @@ from docx import Document
 from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import calendar
-import extra_streamlit_components as stx
 import time
 import re
 
@@ -20,7 +19,7 @@ st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide", ini
 # --- LISTA DE MESES ---
 MESES_ESP = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
-# --- ESTILOS CSS (SÚPER OPTIMIZADO PARA IOS/ANDROID) ---
+# --- ESTILOS CSS (OPTIMIZADO PARA IOS/ANDROID) ---
 def cargar_estilos():
     st.markdown("""
         <style>
@@ -61,7 +60,6 @@ def cargar_estilos():
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
         }
-        /* Forzar tamaño de letra en inputs para que iOS no haga zoom */
         input, textarea, select, div[data-baseweb="select"] { 
             font-size: 16px !important; 
         }
@@ -170,7 +168,8 @@ def obtener_usuario(usuario_input, password_input):
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
 
-def obtener_usuario_por_cookie(usuario_input):
+# Función auxiliar para recuperar usuario SOLO por nombre (usada en login por URL)
+def recuperar_usuario_por_nombre(usuario_input):
     try:
         df = obtener_todos_usuarios()
         if "Usuario" not in df.columns: return None
@@ -354,57 +353,32 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- SISTEMA DE AUTENTICACIÓN AVANZADO (VERSIÓN 35.0) ---
-cookie_manager = stx.CookieManager(key="auth_manager")
+# --- SISTEMA DE AUTENTICACIÓN POR URL (VERSIÓN 36.0 DEFINITIVA) ---
+# Estrategia: Si el parámetro '?u=usuario' existe en la URL, autologueamos.
+# Esto evita la dependencia de cookies que el navegador borra al suspender la pestaña.
 
-# Inicializar Variables de Estado de Sesión
-if 'auth_status' not in st.session_state:
-    st.session_state['auth_status'] = 'verificando' # Estados: verificando, logueado, sin_login
-if 'intentos_lectura' not in st.session_state:
-    st.session_state['intentos_lectura'] = 0
+if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 
-# LÓGICA DE CONTROL
-if st.session_state['auth_status'] == 'verificando':
-    # Intentamos leer la cookie
-    cookie_val = cookie_manager.get("gym_user")
+# 1. VERIFICACIÓN DE URL AL INICIO
+if not st.session_state['logueado']:
+    # Leemos la URL
+    params = st.query_params
+    user_url = params.get("u", None)
     
-    if cookie_val:
-        # ¡ÉXITO! Encontramos la cookie
-        user = obtener_usuario_por_cookie(cookie_val)
-        if user is not None:
-            st.session_state['auth_status'] = 'logueado'
-            st.session_state['usuario_info'] = user
-            # Renovar cookie 30 días
-            exp = datetime.now() + timedelta(days=30)
-            cookie_manager.set("gym_user", cookie_val, expires_at=exp)
-            st.rerun()
+    if user_url:
+        # Si hay usuario en la URL, lo validamos contra la DB
+        user_data = recuperar_usuario_por_nombre(user_url)
+        if user_data is not None:
+            # Login exitoso por URL
+            st.session_state['logueado'] = True
+            st.session_state['usuario_info'] = user_data
+            # No hacemos rerun aquí para dejar fluir el script
         else:
-            # Cookie inválida (usuario borrado?)
-            st.session_state['auth_status'] = 'sin_login'
-            st.rerun()
-    else:
-        # FALLO: No leímos cookie aún.
-        # Si llevamos pocos intentos, reintentamos (Recargamos la página)
-        if st.session_state['intentos_lectura'] < 2:
-            st.session_state['intentos_lectura'] += 1
-            time.sleep(1) # Espera pasiva
-            st.rerun() # Recarga forzada para dar tiempo al JS
-        else:
-            # Ya intentamos 3 veces (0, 1, 2) y nada. Asumimos que no hay usuario.
-            st.session_state['auth_status'] = 'sin_login'
-            st.rerun()
+            # Usuario de URL no existe o es inválido, limpiamos URL
+            st.query_params.clear()
 
-# RENDERIZADO DE INTERFAZ SEGÚN ESTADO
-if st.session_state['auth_status'] == 'verificando':
-    # Pantalla de Carga Limpia
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-        with st.spinner("Conectando con El Estudio..."):
-            time.sleep(2) # Mantiene el spinner visible mientras se hacen los reruns
-
-elif st.session_state['auth_status'] == 'sin_login':
-    # Pantalla de Login
+# 2. PANTALLA DE LOGIN (Solo si falló la URL)
+if not st.session_state['logueado']:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<br><br><h1 style='text-align: center;'>EL ESTUDIO 🔥</h1><br>", unsafe_allow_html=True)
@@ -415,17 +389,23 @@ elif st.session_state['auth_status'] == 'sin_login':
                 if st.form_submit_button("ENTRAR", use_container_width=True):
                     user = obtener_usuario(u, p)
                     if user is not None: 
-                        exp_date = datetime.now() + timedelta(days=30)
-                        cookie_manager.set("gym_user", u, expires_at=exp_date)
-                        st.session_state['auth_status'] = 'logueado'
+                        st.session_state['logueado'] = True
                         st.session_state['usuario_info'] = user
+                        
+                        # ESTRATEGIA: Si es Alumno, guardamos en URL para persistencia infinita
+                        # Si es Admin, NO guardamos en URL por seguridad (requiere login real)
+                        rol_user = str(user.get('Rol', 'alumno')).strip().lower()
+                        if rol_user == 'alumno':
+                            st.query_params["u"] = user['Usuario']
+                        
                         st.rerun()
                     else: st.error("❌ Datos incorrectos")
 
-elif st.session_state['auth_status'] == 'logueado':
-    # --- APP PRINCIPAL ---
+# 3. APP PRINCIPAL
+else:
     datos = st.session_state['usuario_info']
-    # Blindaje de datos nulos
+    
+    # --- BLINDAJE ANTI-ERROR (Safe Unpack) ---
     rol = str(datos.get('Rol', 'alumno')).strip()
     nombre = str(datos.get('Nombre', 'Usuario')).strip()
     alias = str(datos.get('Usuario', '')).strip()
@@ -436,11 +416,9 @@ elif st.session_state['auth_status'] == 'logueado':
         st.markdown("---")
         if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): st.cache_data.clear(); st.rerun()
         if st.button("SALIR", use_container_width=True):
-            try: cookie_manager.delete("gym_user")
-            except: pass
-            # Reset total
-            st.session_state['auth_status'] = 'sin_login'
-            st.session_state['intentos_lectura'] = 0
+            # Limpiamos todo: estado y URL
+            st.session_state['logueado'] = False
+            st.query_params.clear()
             st.rerun()
 
     if rol == "admin":
