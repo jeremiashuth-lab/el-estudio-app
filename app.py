@@ -53,25 +53,17 @@ def cargar_estilos():
         div[data-testid="stMetric"] { background-color: #1A1C24; border: 1px solid #333; padding: 10px; border-radius: 8px; }
         div[data-testid="stMetricValue"] { color: #E63946 !important; font-weight: 800; font-size: 1.8rem !important; }
         
-        /* FIX CRÍTICO IPHONE: Evita el zoom al tocar inputs y mejora botones */
+        /* FIX CRÍTICO IPHONE */
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 8px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
-            padding-top: 15px; padding-bottom: 15px; /* Botones más altos para dedo */
+            padding-top: 15px; padding-bottom: 15px;
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
         }
-        input, textarea, select {
-            font-size: 16px !important; /* Evita que iOS haga zoom al escribir */
-        }
-        
-        /* Estabilizador de Layout */
+        input, textarea, select { font-size: 16px !important; }
         div[data-testid="stVerticalBlock"] { gap: 1rem; }
-        
-        /* Spinner personalizado */
-        .stSpinner > div {
-            border-top-color: #E63946 !important;
-        }
+        .stSpinner > div { border-top-color: #E63946 !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -357,7 +349,7 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- GESTIÓN DE SESIÓN ROBUSTA (VERSIÓN 33.0) ---
+# --- GESTIÓN DE SESIÓN ROBUSTA (VERSIÓN 33.1 ANTI-CRASH) ---
 cookie_manager = stx.CookieManager(key="login_cookies")
 
 if 'logueado' not in st.session_state: 
@@ -399,6 +391,12 @@ if not st.session_state['logueado']:
                     else: st.error("❌ Error")
 else:
     datos = st.session_state['usuario_info']
-    rol, nombre, alias = datos['Rol'], datos['Nombre'], datos['Usuario']
+    # --- BLINDAJE ANTI-ERROR (Safe Unpack) ---
+    rol = str(datos.get('Rol', 'alumno')).strip()
+    nombre = str(datos.get('Nombre', 'Usuario')).strip()
+    alias = str(datos.get('Usuario', '')).strip()
+    if nombre.lower() in ['nan', 'none', '']: nombre = "Usuario"
+
     with st.sidebar:
-        st.markdown(f"## {nombre.upper()}"); st.capti
+        st.markdown(f"## {nombre.upper()}"); st.caption(f"ROL: {rol.upper()}")
+        st.markdown("
