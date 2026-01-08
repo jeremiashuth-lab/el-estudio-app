@@ -15,12 +15,13 @@ import time
 import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
+# layout="wide" ayuda a que no se apriete todo en el centro
 st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide")
 
 # --- LISTA DE MESES ---
 MESES_ESP = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
-# --- ESTILOS CSS (OPTIMIZADO PARA IOS) ---
+# --- ESTILOS CSS (SÚPER OPTIMIZADO PARA IOS) ---
 def cargar_estilos():
     st.markdown("""
         <style>
@@ -53,18 +54,20 @@ def cargar_estilos():
         div[data-testid="stMetric"] { background-color: #1A1C24; border: 1px solid #333; padding: 10px; border-radius: 8px; }
         div[data-testid="stMetricValue"] { color: #E63946 !important; font-weight: 800; font-size: 1.8rem !important; }
         
-        /* Botones (Toque rápido en iOS) */
+        /* FIX CRÍTICO IPHONE: Evita el zoom al tocar inputs y mejora botones */
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 8px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
-            padding-top: 12px; padding-bottom: 12px;
+            padding-top: 15px; padding-bottom: 15px; /* Botones más altos para dedo */
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
         }
-        div.stButton > button:first-child:hover { background-color: #FF4D5A; }
+        input, textarea, select {
+            font-size: 16px !important; /* Evita que iOS haga zoom al escribir */
+        }
         
-        /* Ajuste de Tablas para Móvil */
-        div[data-testid="stDataFrame"] { width: 100%; }
+        /* Estabilizador de Layout */
+        div[data-testid="stVerticalBlock"] { gap: 1rem; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -350,13 +353,15 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- GESTIÓN DE COOKIES Y SESIÓN ---
+# --- GESTIÓN DE SESIÓN ---
 cookie_manager = stx.CookieManager(key="login_cookies")
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 
+# REVISIÓN DE COOKIE AL INICIO (Con pequeña pausa para asegurar carga)
 if not st.session_state['logueado']:
     try:
-        time.sleep(0.1)
+        # Pausa técnica para dar tiempo a leer la cookie en dispositivos lentos
+        time.sleep(0.3)
         c_user = cookie_manager.get(cookie="gym_user")
         if c_user:
             user = obtener_usuario_por_cookie(c_user)
@@ -377,7 +382,9 @@ if not st.session_state['logueado']:
                 if st.form_submit_button("ENTRAR", use_container_width=True):
                     user = obtener_usuario(u, p)
                     if user is not None: 
-                        cookie_manager.set("gym_user", u, expires_at=datetime.now() + timedelta(days=30))
+                        # COOKIE 12 HORAS
+                        exp_date = datetime.now() + timedelta(hours=12)
+                        cookie_manager.set("gym_user", u, expires_at=exp_date)
                         st.session_state['logueado'] = True; st.session_state['usuario_info'] = user; st.rerun()
                     else: st.error("❌ Error")
 else:
