@@ -15,12 +15,12 @@ import time
 import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide")
+st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide", initial_sidebar_state="auto")
 
 # --- LISTA DE MESES ---
 MESES_ESP = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
-# --- ESTILOS CSS (SÚPER OPTIMIZADO PARA IOS) ---
+# --- ESTILOS CSS (SÚPER OPTIMIZADO PARA IOS/ANDROID) ---
 def cargar_estilos():
     st.markdown("""
         <style>
@@ -53,17 +53,22 @@ def cargar_estilos():
         div[data-testid="stMetric"] { background-color: #1A1C24; border: 1px solid #333; padding: 10px; border-radius: 8px; }
         div[data-testid="stMetricValue"] { color: #E63946 !important; font-weight: 800; font-size: 1.8rem !important; }
         
-        /* FIX CRÍTICO IPHONE */
+        /* FIX CRÍTICO IPHONE (Evita zoom y scroll horizontal) */
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 8px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
-            padding-top: 15px; padding-bottom: 15px;
+            padding-top: 16px; padding-bottom: 16px; width: 100%;
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
         }
-        input, textarea, select { font-size: 16px !important; }
+        /* Forzar tamaño de letra en inputs para que iOS no haga zoom */
+        input, textarea, select, div[data-baseweb="select"] { 
+            font-size: 16px !important; 
+        }
+        
+        /* Estabilizar Layout */
+        .block-container { padding-top: 2rem; padding-bottom: 5rem; }
         div[data-testid="stVerticalBlock"] { gap: 1rem; }
-        .stSpinner > div { border-top-color: #E63946 !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -349,35 +354,57 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- GESTIÓN DE SESIÓN ROBUSTA (VERSIÓN 34.0: DOBLE VERIFICACIÓN) ---
-cookie_manager = stx.CookieManager(key="login_cookies")
+# --- SISTEMA DE AUTENTICACIÓN AVANZADO (VERSIÓN 35.0) ---
+cookie_manager = stx.CookieManager(key="auth_manager")
 
-if 'logueado' not in st.session_state: 
-    st.session_state['logueado'] = False
+# Inicializar Variables de Estado de Sesión
+if 'auth_status' not in st.session_state:
+    st.session_state['auth_status'] = 'verificando' # Estados: verificando, logueado, sin_login
+if 'intentos_lectura' not in st.session_state:
+    st.session_state['intentos_lectura'] = 0
 
-# FASE 1: Verificación Agresiva de Cookie
-if not st.session_state['logueado']:
-    # INTENTO 1
-    c_user = cookie_manager.get(cookie="gym_user")
+# LÓGICA DE CONTROL
+if st.session_state['auth_status'] == 'verificando':
+    # Intentamos leer la cookie
+    cookie_val = cookie_manager.get("gym_user")
     
-    # Si falla, PAUSAMOS 1.5s (Trampa de tiempo para móviles) y reintentamos
-    if not c_user:
-        with st.spinner('Cargando...'):
-            time.sleep(1.5)
-            c_user = cookie_manager.get(cookie="gym_user")
-            
-    if c_user:
-        user = obtener_usuario_por_cookie(c_user)
+    if cookie_val:
+        # ¡ÉXITO! Encontramos la cookie
+        user = obtener_usuario_por_cookie(cookie_val)
         if user is not None:
-            st.session_state['logueado'] = True
+            st.session_state['auth_status'] = 'logueado'
             st.session_state['usuario_info'] = user
-            # Renovamos cookie
-            exp_date = datetime.now() + timedelta(days=30)
-            cookie_manager.set("gym_user", c_user, expires_at=exp_date)
+            # Renovar cookie 30 días
+            exp = datetime.now() + timedelta(days=30)
+            cookie_manager.set("gym_user", cookie_val, expires_at=exp)
+            st.rerun()
+        else:
+            # Cookie inválida (usuario borrado?)
+            st.session_state['auth_status'] = 'sin_login'
+            st.rerun()
+    else:
+        # FALLO: No leímos cookie aún.
+        # Si llevamos pocos intentos, reintentamos (Recargamos la página)
+        if st.session_state['intentos_lectura'] < 2:
+            st.session_state['intentos_lectura'] += 1
+            time.sleep(1) # Espera pasiva
+            st.rerun() # Recarga forzada para dar tiempo al JS
+        else:
+            # Ya intentamos 3 veces (0, 1, 2) y nada. Asumimos que no hay usuario.
+            st.session_state['auth_status'] = 'sin_login'
             st.rerun()
 
-# FASE 2: Mostrar Login
-if not st.session_state['logueado']:
+# RENDERIZADO DE INTERFAZ SEGÚN ESTADO
+if st.session_state['auth_status'] == 'verificando':
+    # Pantalla de Carga Limpia
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        with st.spinner("Conectando con El Estudio..."):
+            time.sleep(2) # Mantiene el spinner visible mientras se hacen los reruns
+
+elif st.session_state['auth_status'] == 'sin_login':
+    # Pantalla de Login
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<br><br><h1 style='text-align: center;'>EL ESTUDIO 🔥</h1><br>", unsafe_allow_html=True)
@@ -390,15 +417,18 @@ if not st.session_state['logueado']:
                     if user is not None: 
                         exp_date = datetime.now() + timedelta(days=30)
                         cookie_manager.set("gym_user", u, expires_at=exp_date)
-                        st.session_state['logueado'] = True; st.session_state['usuario_info'] = user; st.rerun()
-                    else: st.error("❌ Error")
-else:
+                        st.session_state['auth_status'] = 'logueado'
+                        st.session_state['usuario_info'] = user
+                        st.rerun()
+                    else: st.error("❌ Datos incorrectos")
+
+elif st.session_state['auth_status'] == 'logueado':
+    # --- APP PRINCIPAL ---
     datos = st.session_state['usuario_info']
-    # --- BLINDAJE ANTI-ERROR (Safe Unpack) ---
+    # Blindaje de datos nulos
     rol = str(datos.get('Rol', 'alumno')).strip()
     nombre = str(datos.get('Nombre', 'Usuario')).strip()
     alias = str(datos.get('Usuario', '')).strip()
-    # Si nombre está vacío o es 'nan', poner default
     if nombre.lower() in ['nan', 'none', '']: nombre = "Usuario"
 
     with st.sidebar:
@@ -408,7 +438,10 @@ else:
         if st.button("SALIR", use_container_width=True):
             try: cookie_manager.delete("gym_user")
             except: pass
-            st.session_state['logueado'] = False; st.rerun()
+            # Reset total
+            st.session_state['auth_status'] = 'sin_login'
+            st.session_state['intentos_lectura'] = 0
+            st.rerun()
 
     if rol == "admin":
         st.title("PANEL DE CONTROL")
