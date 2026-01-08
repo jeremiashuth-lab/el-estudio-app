@@ -349,30 +349,34 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- GESTIÓN DE SESIÓN ROBUSTA (VERSIÓN 33.1 ANTI-CRASH) ---
+# --- GESTIÓN DE SESIÓN ROBUSTA (VERSIÓN 34.0: DOBLE VERIFICACIÓN) ---
 cookie_manager = stx.CookieManager(key="login_cookies")
 
 if 'logueado' not in st.session_state: 
     st.session_state['logueado'] = False
 
-# FASE 1: Intentar recuperar sesión si no estamos logueados
+# FASE 1: Verificación Agresiva de Cookie
 if not st.session_state['logueado']:
-    with st.spinner('Cargando sesión...'):
-        time.sleep(0.5) # Espera técnica para dar tiempo al navegador móvil
-        try:
+    # INTENTO 1
+    c_user = cookie_manager.get(cookie="gym_user")
+    
+    # Si falla, PAUSAMOS 1.5s (Trampa de tiempo para móviles) y reintentamos
+    if not c_user:
+        with st.spinner('Cargando...'):
+            time.sleep(1.5)
             c_user = cookie_manager.get(cookie="gym_user")
-            if c_user:
-                user = obtener_usuario_por_cookie(c_user)
-                if user is not None:
-                    st.session_state['logueado'] = True
-                    st.session_state['usuario_info'] = user
-                    # Renovamos la cookie 30 días más para que no caduque
-                    exp_date = datetime.now() + timedelta(days=30)
-                    cookie_manager.set("gym_user", c_user, expires_at=exp_date)
-                    st.rerun()
-        except: pass
+            
+    if c_user:
+        user = obtener_usuario_por_cookie(c_user)
+        if user is not None:
+            st.session_state['logueado'] = True
+            st.session_state['usuario_info'] = user
+            # Renovamos cookie
+            exp_date = datetime.now() + timedelta(days=30)
+            cookie_manager.set("gym_user", c_user, expires_at=exp_date)
+            st.rerun()
 
-# FASE 2: Mostrar Login o App
+# FASE 2: Mostrar Login
 if not st.session_state['logueado']:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -384,7 +388,6 @@ if not st.session_state['logueado']:
                 if st.form_submit_button("ENTRAR", use_container_width=True):
                     user = obtener_usuario(u, p)
                     if user is not None: 
-                        # COOKIE 30 DÍAS (SOLUCIÓN DEFINITIVA)
                         exp_date = datetime.now() + timedelta(days=30)
                         cookie_manager.set("gym_user", u, expires_at=exp_date)
                         st.session_state['logueado'] = True; st.session_state['usuario_info'] = user; st.rerun()
@@ -395,6 +398,7 @@ else:
     rol = str(datos.get('Rol', 'alumno')).strip()
     nombre = str(datos.get('Nombre', 'Usuario')).strip()
     alias = str(datos.get('Usuario', '')).strip()
+    # Si nombre está vacío o es 'nan', poner default
     if nombre.lower() in ['nan', 'none', '']: nombre = "Usuario"
 
     with st.sidebar:
