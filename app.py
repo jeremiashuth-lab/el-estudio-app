@@ -19,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. ESTILOS CSS (ANTI-SALTO) ---
+# --- 2. ESTILOS CSS (ANTI-SALTO + VISUAL) ---
 def cargar_estilos():
     st.markdown("""
         <style>
@@ -34,6 +34,11 @@ def cargar_estilos():
         h1 { color: #E63946 !important; font-weight: 800 !important; letter-spacing: -1px; margin-bottom: 0.5rem; }
         h2, h3 { font-weight: 600 !important; margin-top: 1rem; }
         
+        /* Métricas */
+        div[data-testid="stMetric"] { background-color: #1A1C24; border: 1px solid #333; padding: 10px; border-radius: 8px; }
+        div[data-testid="stMetricValue"] { color: #E63946 !important; font-weight: 800; font-size: 1.8rem !important; }
+
+        /* Botones */
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 12px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
@@ -134,7 +139,12 @@ def leer_registros_alumno(alumno):
             try: return float(re.search(r"(\d+[.,]?\d*)", str(texto)).group(1).replace(",", "."))
             except: return 0.0
         
+        col_reps = next((c for c in df_alumno.columns if "rep" in c.lower()), None)
+        
         if "Peso" in df_alumno.columns: df_alumno["Peso_Grafico"] = df_alumno["Peso"].apply(extraer_numero)
+        if col_reps: df_alumno["Reps_Grafico"] = df_alumno[col_reps].apply(extraer_numero)
+        else: df_alumno["Reps_Grafico"] = 0.0
+            
     return df_alumno
 
 # --- 5. FUNCIONES DE ESCRITURA ---
@@ -254,7 +264,6 @@ def generar_word(alumno, df_rutina):
         doc.add_heading(dia, level=1)
         rutina_dia = df_rutina[df_rutina["Dia"] == dia]
         
-        # Agrupar por sección para orden en Word
         for sec in ["Calentamiento", "Fuerza", "Cardio"]:
             df_sec = rutina_dia[rutina_dia["Seccion"] == sec]
             if not df_sec.empty:
@@ -272,7 +281,6 @@ def generar_word(alumno, df_rutina):
     b = BytesIO(); doc.save(b); b.seek(0); return b
 
 def render_calendar(year, month, df_sesiones):
-    # DEFINIMOS LOS MESES AQUÍ ADENTRO PARA EVITAR ERRORES DE SCOPE
     nombres_meses = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
     month_name = nombres_meses[month]
     
@@ -357,7 +365,6 @@ else:
         tab1, tab2 = st.tabs(["DISEÑO", "ESTADÍSTICAS"])
         
         with tab1:
-            # Selector de Alumno y Día
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 3, 1]) 
                 with c3: 
@@ -368,7 +375,6 @@ else:
                 with c1: alu = st.selectbox("ALUMNO", als)
                 with c2: dia = st.selectbox("DÍA", ["Día 1", "Día 2", "Día 3", "Día 4"])
 
-            # Carga de Rutina
             rut = leer_rutina(alu)
             
             cols_c = ["Ejercicio", "Link", "Series", "Reps", "Notas"]
@@ -389,7 +395,6 @@ else:
                     ca = r_dia[r_dia["Seccion"] == "Cardio"]
                     if not ca.empty: d_car = ca[cols_ca]
 
-            # Editores
             d_cal = preparar_df_editor(d_cal, cols_c, filas_minimas=4)
             d_fue = preparar_df_editor(d_fue, cols_f, filas_minimas=8)
             d_car = preparar_df_editor(d_car, cols_ca, filas_minimas=3)
@@ -399,10 +404,8 @@ else:
             with st.expander("EDITOR DE RUTINA", expanded=True):
                 st.caption("CALENTAMIENTO")
                 ed_c = st.data_editor(d_cal, num_rows="dynamic", use_container_width=True, key=f"c_{alu}_{dia}", column_config={"Link": col_link})
-                
                 st.caption("FUERZA")
                 ed_f = st.data_editor(d_fue, num_rows="dynamic", use_container_width=True, height=400, key=f"f_{alu}_{dia}", column_config={"Link": col_link})
-                
                 st.caption("CARDIO")
                 ed_ca = st.data_editor(d_car, num_rows="dynamic", use_container_width=True, key=f"ca_{alu}_{dia}", column_config={"Link": col_link})
             
@@ -434,7 +437,6 @@ else:
             with c_hist:
                 st.markdown("### 📈 Historial")
                 df_r = leer_registros_alumno(alu_s)
-                
                 with st.expander("Gestión de Registros"):
                      if not df_r.empty:
                         cols_show = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
@@ -446,7 +448,6 @@ else:
                             st.cache_data.clear()
                             st.rerun()
                      else: st.info("Sin registros.")
-
                 if not df_r.empty and "Peso_Grafico" in df_r.columns:
                     lista_ejercicios = df_r["Ejercicio"].unique()
                     if len(lista_ejercicios) > 0:
@@ -482,30 +483,26 @@ else:
                         st.markdown(f"#### {seccion}")
                         cols_show = ["Ejercicio", "Series", "Reps", "Link", "Notas"]
                         if seccion == "Fuerza": cols_show.insert(3, "Kg")
-                        
-                        st.dataframe(
-                            df_sec[cols_show], 
-                            hide_index=True, 
-                            use_container_width=True, 
-                            column_config={"Link": cfg_link}
-                        )
+                        st.dataframe(df_sec[cols_show], hide_index=True, use_container_width=True, column_config={"Link": cfg_link})
 
                 st.markdown("---")
                 st.subheader("📝 Registrar Serie")
                 
-                # FORMULARIO ESTABLE (Evita saltos)
                 with st.form("registro_rapido"):
-                    ejercicios_dia = r_hoy["Ejercicio"].unique()
-                    if len(ejercicios_dia) == 0: ejercicios_dia = ["Varios"]
+                    # FILTRO: SOLO EJERCICIOS DE FUERZA
+                    ejercicios_fuerza = r_hoy[r_hoy["Seccion"] == "Fuerza"]["Ejercicio"].unique()
                     
-                    c_ej, c_kg = st.columns([2, 1])
-                    ej_sel = c_ej.selectbox("Ejercicio", ejercicios_dia)
-                    kg_in = c_kg.text_input("Kilos", placeholder="Ej: 50")
+                    if len(ejercicios_fuerza) == 0:
+                        st.warning("No hay ejercicios de fuerza para este día.")
+                        ej_sel = st.text_input("Ejercicio") # Fallback manual
+                    else:
+                        c_ej, c_kg = st.columns([2, 1])
+                        ej_sel = c_ej.selectbox("Ejercicio (Solo Fuerza)", ejercicios_fuerza)
+                        kg_in = c_kg.text_input("Kilos", placeholder="Ej: 50")
                     
                     c_reps, c_rpe = st.columns(2)
                     reps_in = c_reps.text_input("Reps", placeholder="Ej: 10")
                     rpe_in = c_rpe.slider("RPE (Esfuerzo)", 1, 10, 7)
-                    
                     notas_in = st.text_area("Notas", height=80)
                     
                     guardar = st.form_submit_button("GUARDAR REGISTRO", use_container_width=True)
@@ -530,6 +527,18 @@ else:
             st.markdown("### Mi Constancia")
             dfs = leer_sesiones_alumno(alias)
             now = datetime.now()
+            
+            # KPI Metrics Restaurados
+            c_kpi1, c_kpi2 = st.columns(2)
+            count_month = 0
+            count_year = 0
+            if not dfs.empty:
+                 count_month = dfs[(dfs["Fecha"].dt.year == now.year) & (dfs["Fecha"].dt.month == now.month)]["Fecha"].nunique()
+                 count_year = dfs[dfs["Fecha"].dt.year == now.year]["Fecha"].nunique()
+            
+            c_kpi1.metric("Entrenos Mes", count_month)
+            c_kpi2.metric("Total Año", count_year)
+
             render_calendar(now.year, now.month, dfs)
             
             st.markdown("### Mi Progreso")
@@ -539,7 +548,24 @@ else:
                  if len(lista_ej) > 0:
                      ej_sel = st.selectbox("Ver:", lista_ej)
                      df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=True)
-                     st.line_chart(df_plt.set_index("Fecha")["Peso_Grafico"], color="#E63946")
                      
-                     with st.expander("Historial Detallado"):
-                         st.dataframe(df_plt[["Fecha", "Peso", "Repeticiones", "Rpe", "Notas"]].sort_values("Fecha", ascending=False), hide_index=True, use_container_width=True)
+                     # Calculo 1RM
+                     df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
+                     
+                     st.line_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
+                     st.caption("📈 La línea muestra tu fuerza estimada (1RM). Si sube, ¡estás más fuerte!")
+                     
+                     st.markdown("#### 🗂️ Bitácora Visual")
+                     # Bitácora visual tipo "Feed" restaurada
+                     df_feed = df_plt.sort_values("Fecha", ascending=False)
+                     for idx, row in df_feed.iterrows():
+                         with st.container(border=True):
+                             c_1, c_2 = st.columns([1, 4])
+                             with c_1:
+                                 st.write(f"**{row['Fecha'].strftime('%d/%m')}**")
+                             with c_2:
+                                 reps_txt = str(row.get('Repeticiones', row.get('Reps', '')))
+                                 peso_txt = str(row.get('Peso', ''))
+                                 st.write(f"💪 **{peso_txt}** |  🔄 **{reps_txt} reps**")
+                                 if str(row.get('Notas','')).strip():
+                                     st.caption(f"📝 {row['Notas']}")
