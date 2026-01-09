@@ -457,76 +457,54 @@ else:
                 
                 r_hoy = rut[rut["Dia"] == d_hoy]
                 
-                # --- AQUÍ ESTÁ EL CAMBIO CLAVE ---
-                # Usamos data_editor para permitir escritura en la tabla
-                st.info("💡 Tip: Puedes escribir tus notas o cambiar el peso directamente en las tablas y luego presionar 'GUARDAR MIS NOTAS'.")
+                # --- VISUALIZACIÓN DE NOTAS ---
+                notas_importantes = []
+                for idx, row in r_hoy.iterrows():
+                    if str(row.get('Notas','')).strip() != "":
+                        notas_importantes.append(f"**{row['Ejercicio']}**: {row['Notas']}")
                 
-                # CONFIGURACIÓN DE COLUMNAS PARA EDICIÓN SEGURA
-                cfg_static = st.column_config.TextColumn(disabled=True) # Columnas fijas
-                cfg_link = st.column_config.LinkColumn("Video", display_text="📺", disabled=True)
-                cfg_notas = st.column_config.TextColumn("Notas (Editable)") # Columna editable
-                
-                # Inicializamos DataFrames vacíos para capturar ediciones
-                ed_c_alu = pd.DataFrame()
-                ed_f_alu = pd.DataFrame()
-                ed_ca_alu = pd.DataFrame()
+                if notas_importantes:
+                    st.info("📝 **NOTAS:**\n\n" + "\n".join([f"- {n}" for n in notas_importantes]))
 
-                # CALENTAMIENTO
+                # --- TABLAS ---
+                cfg_static = st.column_config.TextColumn(disabled=True)
+                cfg_link = st.column_config.LinkColumn("Video", display_text="📺", disabled=True)
+                cfg_notas = st.column_config.TextColumn("Notas (Editable)", width="large")
+                
+                ed_c_alu = pd.DataFrame(); ed_f_alu = pd.DataFrame(); ed_ca_alu = pd.DataFrame()
+
                 df_sec_c = r_hoy[r_hoy["Seccion"] == "Calentamiento"]
                 if not df_sec_c.empty:
                     st.markdown("#### Calentamiento")
                     cols_c = ["Ejercicio", "Series", "Reps", "Link", "Notas"]
                     ed_c_alu = st.data_editor(
-                        df_sec_c[cols_c], 
-                        key=f"ed_c_{d_hoy}", 
-                        hide_index=True, 
-                        use_container_width=True,
-                        column_config={
-                            "Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Notas": cfg_notas
-                        }
+                        df_sec_c[cols_c], key=f"ed_c_{d_hoy}", hide_index=True, use_container_width=True,
+                        column_config={"Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Notas": cfg_notas}
                     )
                 
-                # FUERZA
                 df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"]
                 if not df_sec_f.empty:
                     st.markdown("#### Fuerza")
                     cols_f = ["Ejercicio", "Series", "Reps", "Kg", "Link", "Notas"]
                     ed_f_alu = st.data_editor(
-                        df_sec_f[cols_f], 
-                        key=f"ed_f_{d_hoy}", 
-                        hide_index=True, 
-                        use_container_width=True,
-                        column_config={
-                            "Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link,
-                            "Kg": st.column_config.TextColumn("Kg (Editable)"),
-                            "Notas": cfg_notas
-                        }
+                        df_sec_f[cols_f], key=f"ed_f_{d_hoy}", hide_index=True, use_container_width=True,
+                        column_config={"Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Kg": st.column_config.TextColumn("Kg (Editable)"), "Notas": cfg_notas}
                     )
                 
-                # CARDIO
                 df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
                 if not df_sec_ca.empty:
                     st.markdown("#### Cardio")
                     cols_ca = ["Ejercicio", "Series", "Reps", "Link", "Notas"]
                     ed_ca_alu = st.data_editor(
-                        df_sec_ca[cols_ca], 
-                        key=f"ed_ca_{d_hoy}", 
-                        hide_index=True, 
-                        use_container_width=True,
-                        column_config={
-                            "Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Notas": cfg_notas
-                        }
+                        df_sec_ca[cols_ca], key=f"ed_ca_{d_hoy}", hide_index=True, use_container_width=True,
+                        column_config={"Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Notas": cfg_notas}
                     )
 
                 if st.button("💾 GUARDAR MIS NOTAS EN LA RUTINA", use_container_width=True):
-                    # Recuperar orden original para no romper nada
                     if not ed_f_alu.empty:
-                         # Fusionar con datos originales que no se muestran (como 'Orden')
                          ed_f_alu["Orden"] = df_sec_f.set_index("Ejercicio").loc[ed_f_alu["Ejercicio"]]["Orden"].values
-                    
                     guardar_rutina_actualizada(alias, d_hoy, ed_c_alu, ed_f_alu, ed_ca_alu)
-                    st.toast("✅ Notas guardadas en tu plan!")
-                    time.sleep(1)
+                    st.toast("✅ Notas guardadas en tu plan!"); time.sleep(1)
 
                 st.markdown("---")
                 st.subheader("📝 Bitácora (Series Efectivas)")
@@ -556,22 +534,29 @@ else:
         with t2:
             st.markdown("### Mi Constancia")
             dfs = leer_sesiones_alumno(alias)
-            now = datetime.now()
+            
+            # --- SELECTOR DE FECHA (CALENDARIO) ---
+            MESES_LIST = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+            c_sel_m, c_sel_y = st.columns([2, 1])
+            mes_actual_idx = datetime.now().month
+            sel_mes_nom = c_sel_m.selectbox("Mes", MESES_LIST[1:], index=mes_actual_idx-1)
+            sel_anio = c_sel_y.number_input("Año", value=datetime.now().year)
+            
+            sel_mes_idx = MESES_LIST.index(sel_mes_nom)
+            
             c_kpi1, c_kpi2 = st.columns(2)
             count_month = 0; count_year = 0
             if not dfs.empty:
-                 count_month = dfs[(dfs["Fecha"].dt.year == now.year) & (dfs["Fecha"].dt.month == now.month)]["Fecha"].nunique()
-                 count_year = dfs[dfs["Fecha"].dt.year == now.year]["Fecha"].nunique()
-            c_kpi1.metric("Entrenos Mes", count_month)
-            c_kpi2.metric("Total Año", count_year)
-            render_calendar(now.year, now.month, dfs)
+                 count_month = dfs[(dfs["Fecha"].dt.year == sel_anio) & (dfs["Fecha"].dt.month == sel_mes_idx)]["Fecha"].nunique()
+                 count_year = dfs[dfs["Fecha"].dt.year == sel_anio]["Fecha"].nunique()
+            c_kpi1.metric(f"Entrenos {sel_mes_nom}", count_month)
+            c_kpi2.metric(f"Total {sel_anio}", count_year)
+            render_calendar(int(sel_anio), sel_mes_idx, dfs)
             
             st.markdown("---")
             st.markdown("### Mi Progreso")
-            
             modo_edicion = st.radio("Modo de Edición:", ["📝 Móvil (Fácil)", "📊 PC (Tabla)"], horizontal=True)
             df_r = leer_registros_alumno(alias)
-            
             if not df_r.empty:
                 if "Móvil" in modo_edicion:
                     with st.expander("🛠️ Corregir Últimos Registros", expanded=False):
