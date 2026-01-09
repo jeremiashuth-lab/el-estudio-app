@@ -43,7 +43,7 @@ def cargar_estilos():
         }
         div.stButton > button:first-child:active { transform: scale(0.98); }
         
-        /* Inputs grandes para móvil */
+        /* Inputs */
         input, textarea, select, div[data-baseweb="select"] { 
             font-size: 16px !important; 
             border-radius: 8px !important; 
@@ -119,36 +119,26 @@ def leer_registros_alumno(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Registros").get_all_records())
     if df.empty: return df
-    
     col_map = {c: c.strip().capitalize() for c in df.columns}
     for k, v in col_map.items():
         if v.lower() in ['user', 'alumno']: col_map[k] = 'Usuario'
         if v.lower() in ['date', 'day']: col_map[k] = 'Fecha'
     df = df.rename(columns=col_map)
-    
     if "Usuario" not in df.columns: return pd.DataFrame()
-    
     df["Usuario_Norm"] = df["Usuario"].astype(str).str.strip().str.lower()
     alumno_norm = alumno.strip().lower()
     df_alumno = df[df["Usuario_Norm"] == alumno_norm].copy()
-    
     if not df_alumno.empty and "Fecha" in df_alumno.columns:
         df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed', errors='coerce').dt.normalize()
         df_alumno = df_alumno.dropna(subset=["Fecha"])
-        
-        # Crear columna ID única para edición segura
         df_alumno = df_alumno.reset_index(drop=True)
-        df_alumno["ID_Temp"] = df_alumno.index
-        
         def extraer_numero(texto):
             try: return float(re.search(r"(\d+[.,]?\d*)", str(texto)).group(1).replace(",", "."))
             except: return 0.0
-        
         if "Peso" in df_alumno.columns: df_alumno["Peso_Grafico"] = df_alumno["Peso"].apply(extraer_numero)
         col_reps = next((c for c in df_alumno.columns if "rep" in c.lower()), None)
         if col_reps: df_alumno["Reps_Grafico"] = df_alumno[col_reps].apply(extraer_numero)
         else: df_alumno["Reps_Grafico"] = 0.0
-            
     return df_alumno
 
 # --- 5. FUNCIONES DE ESCRITURA ---
@@ -219,28 +209,18 @@ def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=Non
     sh.worksheet("Registros").append_row([fecha, usuario, ejercicio, peso, reps, rpe, notas])
 
 def editar_un_registro_especifico(usuario, fecha_original, ejercicio_original, nuevo_peso, nuevas_reps, nueva_nota):
-    """Función quirúrgica para editar un solo registro sin tocar el resto"""
     sh = conectar_google_sheet()
     ws = sh.worksheet("Registros")
     all_data = ws.get_all_records()
-    
-    # Encontrar la fila que coincida
     fila_idx = -1
     for i, row in enumerate(all_data):
-        # Convertir a string para comparar seguro
         r_user = str(row.get("Usuario", "")).strip().lower()
         r_date = str(row.get("Fecha", "")).strip()
         r_ej = str(row.get("Ejercicio", "")).strip()
-        
-        # Comparación laxa
         if r_user == usuario.strip().lower() and r_date == fecha_original and r_ej == ejercicio_original:
-            # Encontramos (o el primero que coincida)
-            fila_idx = i + 2 # +2 porque gspread es 1-based y hay header
+            fila_idx = i + 2
             break
-    
     if fila_idx != -1:
-        # Actualizar celdas específicas (Col D=4 Peso, E=5 Reps, G=7 Notas)
-        # Asumiendo estructura: Fecha, Usuario, Ejercicio, Peso, Reps, Rpe, Notas
         ws.update_cell(fila_idx, 4, nuevo_peso)
         ws.update_cell(fila_idx, 5, nuevas_reps)
         ws.update_cell(fila_idx, 7, nueva_nota)
@@ -253,19 +233,15 @@ def actualizar_registros_masivo(usuario, df_editado):
     all_data = ws.get_all_records()
     df_all = pd.DataFrame(all_data)
     if df_all.empty: return
-    
     df_all.columns = [c.strip().capitalize() for c in df_all.columns]
     col_map = {c: c for c in df_all.columns}
     for c in df_all.columns:
         if c.lower() in ['user', 'alumno']: col_map[c] = 'Usuario'
     df_all = df_all.rename(columns=col_map)
-    
     df_otros = df_all[df_all["Usuario"].astype(str).str.lower() != usuario.lower()]
-    
     df_nuevos = df_editado.copy()
     if "Fecha" in df_nuevos.columns:
         df_nuevos["Fecha"] = pd.to_datetime(df_nuevos["Fecha"]).dt.strftime("%Y-%m-%d")
-        
     df_final = pd.concat([df_otros, df_nuevos], ignore_index=True).fillna("").sort_values("Fecha")
     ws.clear()
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
@@ -280,7 +256,6 @@ def preparar_df_editor(df_input, columnas, filas_minimas=4):
     if df_input.empty: df_input = pd.DataFrame(columns=columnas)
     for c in ["Series", "Reps", "Kg"]:
         if c in df_input.columns: df_input[c] = df_input[c].astype(str)
-    
     filas_actuales = len(df_input)
     if filas_actuales < filas_minimas:
         extras = pd.DataFrame([[""] * len(columnas)] * (filas_minimas - filas_actuales), columns=columnas)
@@ -320,7 +295,6 @@ def render_calendar(year, month, df_sesiones):
         mask = (df_sesiones["Fecha"].dt.year == year) & (df_sesiones["Fecha"].dt.month == month)
         df_mes = df_sesiones[mask]
         for _, row in df_mes.iterrows(): asistencia_map[row["Fecha"].day] = row["Estado"]
-        
     html = f"""<div style="text-align:center; font-weight:bold; font-size:1.1rem; color:#E63946; margin-bottom:8px;">{month_name} {year}</div>
     <div class="calendar-container">
     <div style="text-align:center; color:#888;">L</div><div style="text-align:center; color:#888;">M</div><div style="text-align:center; color:#888;">M</div><div style="text-align:center; color:#888;">J</div><div style="text-align:center; color:#888;">V</div><div style="text-align:center; color:#888;">S</div><div style="text-align:center; color:#888;">D</div>"""
@@ -482,37 +456,98 @@ else:
                          st.download_button("📥 Word", generar_word(alias, rut), "Rutina.docx", use_container_width=True)
                 
                 r_hoy = rut[rut["Dia"] == d_hoy]
-                cfg_link = st.column_config.LinkColumn("Video", display_text="📺")
                 
-                for seccion in ["Calentamiento", "Fuerza", "Cardio"]:
-                    df_sec = r_hoy[r_hoy["Seccion"] == seccion]
-                    if not df_sec.empty:
-                        st.markdown(f"#### {seccion}")
-                        cols_show = ["Ejercicio", "Series", "Reps", "Link", "Notas"]
-                        if seccion == "Fuerza": cols_show.insert(3, "Kg")
-                        st.dataframe(df_sec[cols_show], hide_index=True, use_container_width=True, column_config={"Link": cfg_link})
+                # --- AQUÍ ESTÁ EL CAMBIO CLAVE ---
+                # Usamos data_editor para permitir escritura en la tabla
+                st.info("💡 Tip: Puedes escribir tus notas o cambiar el peso directamente en las tablas y luego presionar 'GUARDAR MIS NOTAS'.")
+                
+                # CONFIGURACIÓN DE COLUMNAS PARA EDICIÓN SEGURA
+                cfg_static = st.column_config.TextColumn(disabled=True) # Columnas fijas
+                cfg_link = st.column_config.LinkColumn("Video", display_text="📺", disabled=True)
+                cfg_notas = st.column_config.TextColumn("Notas (Editable)") # Columna editable
+                
+                # Inicializamos DataFrames vacíos para capturar ediciones
+                ed_c_alu = pd.DataFrame()
+                ed_f_alu = pd.DataFrame()
+                ed_ca_alu = pd.DataFrame()
+
+                # CALENTAMIENTO
+                df_sec_c = r_hoy[r_hoy["Seccion"] == "Calentamiento"]
+                if not df_sec_c.empty:
+                    st.markdown("#### Calentamiento")
+                    cols_c = ["Ejercicio", "Series", "Reps", "Link", "Notas"]
+                    ed_c_alu = st.data_editor(
+                        df_sec_c[cols_c], 
+                        key=f"ed_c_{d_hoy}", 
+                        hide_index=True, 
+                        use_container_width=True,
+                        column_config={
+                            "Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Notas": cfg_notas
+                        }
+                    )
+                
+                # FUERZA
+                df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"]
+                if not df_sec_f.empty:
+                    st.markdown("#### Fuerza")
+                    cols_f = ["Ejercicio", "Series", "Reps", "Kg", "Link", "Notas"]
+                    ed_f_alu = st.data_editor(
+                        df_sec_f[cols_f], 
+                        key=f"ed_f_{d_hoy}", 
+                        hide_index=True, 
+                        use_container_width=True,
+                        column_config={
+                            "Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link,
+                            "Kg": st.column_config.TextColumn("Kg (Editable)"),
+                            "Notas": cfg_notas
+                        }
+                    )
+                
+                # CARDIO
+                df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
+                if not df_sec_ca.empty:
+                    st.markdown("#### Cardio")
+                    cols_ca = ["Ejercicio", "Series", "Reps", "Link", "Notas"]
+                    ed_ca_alu = st.data_editor(
+                        df_sec_ca[cols_ca], 
+                        key=f"ed_ca_{d_hoy}", 
+                        hide_index=True, 
+                        use_container_width=True,
+                        column_config={
+                            "Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Notas": cfg_notas
+                        }
+                    )
+
+                if st.button("💾 GUARDAR MIS NOTAS EN LA RUTINA", use_container_width=True):
+                    # Recuperar orden original para no romper nada
+                    if not ed_f_alu.empty:
+                         # Fusionar con datos originales que no se muestran (como 'Orden')
+                         ed_f_alu["Orden"] = df_sec_f.set_index("Ejercicio").loc[ed_f_alu["Ejercicio"]]["Orden"].values
+                    
+                    guardar_rutina_actualizada(alias, d_hoy, ed_c_alu, ed_f_alu, ed_ca_alu)
+                    st.toast("✅ Notas guardadas en tu plan!")
+                    time.sleep(1)
 
                 st.markdown("---")
-                st.subheader("📝 Registrar Serie")
+                st.subheader("📝 Bitácora (Series Efectivas)")
                 with st.form("registro_rapido"):
                     ejercicios_fuerza = r_hoy[r_hoy["Seccion"] == "Fuerza"]["Ejercicio"].unique()
                     if len(ejercicios_fuerza) == 0:
-                        st.warning("No hay ejercicios de fuerza hoy.")
                         ej_sel = st.text_input("Ejercicio")
                     else:
                         c_ej, c_kg = st.columns([2, 1])
-                        ej_sel = c_ej.selectbox("Ejercicio (Fuerza)", ejercicios_fuerza)
+                        ej_sel = c_ej.selectbox("Ejercicio", ejercicios_fuerza)
                         kg_in = c_kg.text_input("Kilos", placeholder="Ej: 50")
                     c_reps, c_rpe = st.columns(2)
                     reps_in = c_reps.text_input("Reps", placeholder="Ej: 10")
                     rpe_in = c_rpe.slider("RPE", 1, 10, 7)
-                    notas_in = st.text_area("Notas", height=80)
-                    if st.form_submit_button("GUARDAR REGISTRO", use_container_width=True):
+                    notas_in = st.text_area("Notas extra", height=80)
+                    if st.form_submit_button("GUARDAR EN HISTORIAL", use_container_width=True):
                         guardar_registro(alias, ej_sel, kg_in, reps_in, rpe_in, notas_in)
-                        st.cache_data.clear(); st.success("Registrado!"); time.sleep(1)
+                        st.cache_data.clear(); st.success("Guardado!"); time.sleep(1)
 
                 c_ok, c_fail = st.columns(2)
-                if c_ok.button("✅ FINALIZAR ENTRENO", use_container_width=True, type="primary"):
+                if c_ok.button("✅ TERMINÉ POR HOY", use_container_width=True, type="primary"):
                     guardar_estado_sesion(alias, "Completado"); st.cache_data.clear(); st.balloons()
                 if c_fail.button("⚠️ INCOMPLETO", use_container_width=True):
                     guardar_estado_sesion(alias, "Incompleto"); st.cache_data.clear()
@@ -534,57 +569,36 @@ else:
             st.markdown("---")
             st.markdown("### Mi Progreso")
             
-            # --- NUEVO SELECTOR DE MODO DE EDICIÓN ---
-            modo_edicion = st.radio("Modo de Edición:", ["📝 Móvil (Formulario)", "📊 PC (Tabla)"], horizontal=True)
-            
+            modo_edicion = st.radio("Modo de Edición:", ["📝 Móvil (Fácil)", "📊 PC (Tabla)"], horizontal=True)
             df_r = leer_registros_alumno(alias)
             
             if not df_r.empty:
-                # MODO 1: FORMULARIO MÓVIL (SEGURO)
                 if "Móvil" in modo_edicion:
                     with st.expander("🛠️ Corregir Últimos Registros", expanded=False):
-                        # Crear lista legible para el dropdown
-                        df_r_sorted = df_r.sort_values("Fecha", ascending=False).head(30) # Solo últimos 30
+                        df_r_sorted = df_r.sort_values("Fecha", ascending=False).head(30)
                         if not df_r_sorted.empty:
                             df_r_sorted["Display"] = df_r_sorted["Fecha"].dt.strftime("%d/%m") + " - " + df_r_sorted["Ejercicio"] + " (" + df_r_sorted["Peso"].astype(str) + "kg)"
-                            
-                            sel_reg = st.selectbox("Selecciona registro a corregir:", df_r_sorted["Display"].tolist())
-                            
-                            # Obtener datos del seleccionado
+                            sel_reg = st.selectbox("Selecciona registro:", df_r_sorted["Display"].tolist())
                             reg_data = df_r_sorted[df_r_sorted["Display"] == sel_reg].iloc[0]
-                            
                             with st.form("form_edicion_movil"):
                                 st.caption(f"Editando: {sel_reg}")
                                 new_kg = st.text_input("Peso", value=str(reg_data["Peso"]))
                                 new_reps = st.text_input("Reps", value=str(reg_data.get("Repeticiones", reg_data.get("Reps", ""))))
                                 new_nota = st.text_area("Nota", value=str(reg_data.get("Notas", "")))
-                                
-                                if st.form_submit_button("ACTUALIZAR CORRECCIÓN", use_container_width=True):
-                                    # Usamos la función quirúrgica
+                                if st.form_submit_button("CORREGIR", use_container_width=True):
                                     fecha_str = reg_data["Fecha"].strftime("%Y-%m-%d")
                                     exito = editar_un_registro_especifico(alias, fecha_str, reg_data["Ejercicio"], new_kg, new_reps, new_nota)
-                                    if exito:
-                                        st.success("Corregido exitosamente.")
-                                        st.cache_data.clear()
-                                        time.sleep(1)
-                                        st.rerun()
-                                    else:
-                                        st.error("No se pudo guardar. Intenta de nuevo.")
-                        else:
-                            st.info("No hay registros recientes.")
-
-                # MODO 2: TABLA (PC)
+                                    if exito: st.success("Listo!"); st.cache_data.clear(); st.rerun()
+                                    else: st.error("Error al guardar.")
                 else:
                     cols_show = ["Fecha", "Ejercicio", "Peso", "Repeticiones", "Notas"]
                     for c in cols_show: 
                         if c not in df_r.columns: df_r[c] = ""
-                    
                     edited_df = st.data_editor(df_r[cols_show], num_rows="dynamic", use_container_width=True, key="editor_pc")
                     if st.button("Guardar Cambios Tabla"):
                         actualizar_registros_masivo(alias, edited_df)
                         st.cache_data.clear(); st.success("Guardado"); time.sleep(1); st.rerun()
 
-                # GRÁFICO Y FEED
                 if "Peso_Grafico" in df_r.columns:
                      st.markdown("<br>", unsafe_allow_html=True)
                      lista_ej = df_r["Ejercicio"].unique()
@@ -594,7 +608,6 @@ else:
                          df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
                          st.line_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
                          st.caption("📈 Fuerza Estimada (1RM)")
-                         
                          st.markdown("#### 🗂️ Historial")
                          df_feed = df_plt.sort_values("Fecha", ascending=False)
                          for idx, row in df_feed.iterrows():
@@ -606,5 +619,4 @@ else:
                                      peso_txt = str(row.get('Peso', ''))
                                      st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}**")
                                      if str(row.get('Notas','')).strip(): st.caption(f"📝 {row['Notas']}")
-            else:
-                st.info("Aún no has registrado nada.")
+            else: st.info("Aún no has registrado nada.")
