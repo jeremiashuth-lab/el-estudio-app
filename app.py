@@ -485,10 +485,15 @@ else:
                 df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"]
                 if not df_sec_f.empty:
                     st.markdown("#### Fuerza")
-                    cols_f = ["Ejercicio", "Series", "Reps", "Kg", "Link", "Notas"]
+                    # AQUI ESTA LA CORRECCION DEL ORDEN (VERSION 49)
+                    cols_f = ["Orden", "Ejercicio", "Series", "Reps", "Kg", "Link", "Notas"]
                     ed_f_alu = st.data_editor(
                         df_sec_f[cols_f], key=f"ed_f_{d_hoy}", hide_index=True, use_container_width=True,
-                        column_config={"Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Kg": st.column_config.TextColumn("Kg (Editable)"), "Notas": cfg_notas}
+                        column_config={
+                            "Orden": cfg_static, # Orden visible pero bloqueado
+                            "Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, 
+                            "Kg": st.column_config.TextColumn("Kg (Editable)"), "Notas": cfg_notas
+                        }
                     )
                 
                 df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
@@ -501,8 +506,7 @@ else:
                     )
 
                 if st.button("💾 GUARDAR MIS NOTAS EN LA RUTINA", use_container_width=True):
-                    if not ed_f_alu.empty:
-                         ed_f_alu["Orden"] = df_sec_f.set_index("Ejercicio").loc[ed_f_alu["Ejercicio"]]["Orden"].values
+                    # No necesitamos recalcular el Orden si ya viene en el dataframe
                     guardar_rutina_actualizada(alias, d_hoy, ed_c_alu, ed_f_alu, ed_ca_alu)
                     st.toast("✅ Notas guardadas en tu plan!"); time.sleep(1)
 
