@@ -19,14 +19,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. ESTILOS CSS (ANTI-SALTO + VISUAL) ---
+# --- 2. ESTILOS CSS (OPTIMIZADO PARA INPUTS MÓVILES) ---
 def cargar_estilos():
     st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;800&display=swap');
         html, body, [class*="css"] { 
             font-family: 'Montserrat', sans-serif; 
-            scroll-behavior: smooth;
+            /* Se eliminó scroll-behavior para arreglar el teclado en móviles */
         }
         
         .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
@@ -48,7 +48,11 @@ def cargar_estilos():
         }
         div.stButton > button:first-child:active { transform: scale(0.98); }
         
-        input, textarea, select { font-size: 16px !important; border-radius: 8px !important; }
+        /* Inputs: Forzamos tamaño de fuente para evitar zoom en iOS */
+        input, textarea, select, div[data-baseweb="select"] { 
+            font-size: 16px !important; 
+            border-radius: 8px !important; 
+        }
         
         /* Calendario Compacto */
         .calendar-container {
@@ -84,6 +88,7 @@ def conectar_google_sheet():
 def obtener_todos_usuarios():
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
+    if df.empty: return df
     df.columns = [c.strip().capitalize() for c in df.columns]
     if "Rol" in df.columns: df["Rol"] = df["Rol"].astype(str).str.strip().str.lower()
     if "Usuario" in df.columns: df["Usuario"] = df["Usuario"].astype(str).str.strip()
@@ -110,7 +115,7 @@ def leer_sesiones_alumno(alumno):
     alumno_norm = alumno.strip().lower()
     df_alumno = df[df["Usuario_Norm"] == alumno_norm].copy()
     if not df_alumno.empty and "Fecha" in df_alumno.columns:
-        df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed').dt.normalize()
+        df_alumno["Fecha"] = pd.to_datetime(df_alumno["Fecha"], format='mixed', errors='coerce').dt.normalize()
     return df_alumno
 
 @st.cache_data(ttl=600)
@@ -139,11 +144,15 @@ def leer_registros_alumno(alumno):
             try: return float(re.search(r"(\d+[.,]?\d*)", str(texto)).group(1).replace(",", "."))
             except: return 0.0
         
-        col_reps = next((c for c in df_alumno.columns if "rep" in c.lower()), None)
+        # Procesamiento seguro de columnas numéricas
+        if "Peso" in df_alumno.columns: 
+            df_alumno["Peso_Grafico"] = df_alumno["Peso"].apply(extraer_numero)
         
-        if "Peso" in df_alumno.columns: df_alumno["Peso_Grafico"] = df_alumno["Peso"].apply(extraer_numero)
-        if col_reps: df_alumno["Reps_Grafico"] = df_alumno[col_reps].apply(extraer_numero)
-        else: df_alumno["Reps_Grafico"] = 0.0
+        col_reps = next((c for c in df_alumno.columns if "rep" in c.lower()), None)
+        if col_reps: 
+            df_alumno["Reps_Grafico"] = df_alumno[col_reps].apply(extraer_numero)
+        else: 
+            df_alumno["Reps_Grafico"] = 0.0
             
     return df_alumno
 
@@ -151,6 +160,7 @@ def leer_registros_alumno(alumno):
 def obtener_usuario(usuario_input, password_input):
     try:
         df = obtener_todos_usuarios()
+        if df.empty: return None
         u_input = usuario_input.strip().lower()
         if "Usuario" not in df.columns: return None
         df["User_Lower"] = df["Usuario"].astype(str).str.strip().str.lower()
@@ -161,6 +171,7 @@ def obtener_usuario(usuario_input, password_input):
 def recuperar_usuario_por_nombre(usuario_input):
     try:
         df = obtener_todos_usuarios()
+        if df.empty: return None
         if "Usuario" not in df.columns: return None
         u_input = usuario_input.strip().lower()
         df["User_Lower"] = df["Usuario"].astype(str).str.strip().str.lower()
@@ -542,6 +553,36 @@ else:
             render_calendar(now.year, now.month, dfs)
             
             st.markdown("### Mi Progreso")
+            
+            # SECCIÓN DE EDICIÓN PARA ALUMNO (NUEVA)
+            with st.expander("🛠️ Corregir Historial"):
+                df_r_edit = leer_registros_alumno(alias)
+                if not df_r_edit.empty:
+                    cols_show = ["Fecha", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
+                    # Normalización
+                    for c in cols_show: 
+                        if c not in df_r_edit.columns: df_r_edit[c] = ""
+                    
+                    # Editor
+                    edited_data_alu = st.data_editor(
+                        df_r_edit[cols_show], 
+                        num_rows="dynamic", 
+                        key=f"editor_alumno_{alias}",
+                        use_container_width=True
+                    )
+                    
+                    if st.button("Guardar Correcciones"):
+                        # Re-inyectar usuario para guardar
+                        edited_data_alu["Usuario"] = alias
+                        actualizar_registros_usuario(alias, edited_data_alu)
+                        st.cache_data.clear()
+                        st.success("Historial corregido.")
+                        time.sleep(1)
+                        st.rerun()
+                else:
+                    st.info("No hay registros para editar.")
+
+            # GRÁFICO Y BITÁCORA VISUAL
             df_r = leer_registros_alumno(alias)
             if not df_r.empty and "Peso_Grafico" in df_r.columns:
                  lista_ej = df_r["Ejercicio"].unique()
