@@ -4,22 +4,21 @@ from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 import os
-import altair as alt
 from io import BytesIO
 from docx import Document
-from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import calendar
 import time
 import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide", initial_sidebar_state="auto")
+# Forzamos la barra lateral expandida para que veas el botón de salir
+st.set_page_config(page_title="El Estudio", page_icon="🔥", layout="wide", initial_sidebar_state="expanded")
 
 # --- LISTA DE MESES ---
 MESES_ESP = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
-# --- ESTILOS CSS (OPTIMIZADO PARA IOS/ANDROID) ---
+# --- ESTILOS CSS (EL ORIGINAL QUE TE GUSTABA) ---
 def cargar_estilos():
     st.markdown("""
         <style>
@@ -52,7 +51,7 @@ def cargar_estilos():
         div[data-testid="stMetric"] { background-color: #1A1C24; border: 1px solid #333; padding: 10px; border-radius: 8px; }
         div[data-testid="stMetricValue"] { color: #E63946 !important; font-weight: 800; font-size: 1.8rem !important; }
         
-        /* FIX CRÍTICO IPHONE (Evita zoom y scroll horizontal) */
+        /* FIX CRÍTICO IPHONE */
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 8px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
@@ -60,12 +59,7 @@ def cargar_estilos():
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
         }
-        input, textarea, select, div[data-baseweb="select"] { 
-            font-size: 16px !important; 
-        }
-        
-        /* Estabilizar Layout */
-        .block-container { padding-top: 2rem; padding-bottom: 5rem; }
+        input, textarea, select { font-size: 16px !important; }
         div[data-testid="stVerticalBlock"] { gap: 1rem; }
         </style>
     """, unsafe_allow_html=True)
@@ -168,7 +162,6 @@ def obtener_usuario(usuario_input, password_input):
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
 
-# Función auxiliar para recuperar usuario SOLO por nombre (usada en login por URL)
 def recuperar_usuario_por_nombre(usuario_input):
     try:
         df = obtener_todos_usuarios()
@@ -353,31 +346,24 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- SISTEMA DE AUTENTICACIÓN POR URL (VERSIÓN 36.0 DEFINITIVA) ---
-# Estrategia: Si el parámetro '?u=usuario' existe en la URL, autologueamos.
-# Esto evita la dependencia de cookies que el navegador borra al suspender la pestaña.
+# --- AUTENTICACIÓN (ESTRATEGIA URL v36.0) ---
 
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 
 # 1. VERIFICACIÓN DE URL AL INICIO
 if not st.session_state['logueado']:
-    # Leemos la URL
     params = st.query_params
     user_url = params.get("u", None)
     
     if user_url:
-        # Si hay usuario en la URL, lo validamos contra la DB
         user_data = recuperar_usuario_por_nombre(user_url)
         if user_data is not None:
-            # Login exitoso por URL
             st.session_state['logueado'] = True
             st.session_state['usuario_info'] = user_data
-            # No hacemos rerun aquí para dejar fluir el script
         else:
-            # Usuario de URL no existe o es inválido, limpiamos URL
             st.query_params.clear()
 
-# 2. PANTALLA DE LOGIN (Solo si falló la URL)
+# 2. PANTALLA DE LOGIN
 if not st.session_state['logueado']:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -391,32 +377,26 @@ if not st.session_state['logueado']:
                     if user is not None: 
                         st.session_state['logueado'] = True
                         st.session_state['usuario_info'] = user
-                        
-                        # ESTRATEGIA: Si es Alumno, guardamos en URL para persistencia infinita
-                        # Si es Admin, NO guardamos en URL por seguridad (requiere login real)
                         rol_user = str(user.get('Rol', 'alumno')).strip().lower()
                         if rol_user == 'alumno':
                             st.query_params["u"] = user['Usuario']
-                        
                         st.rerun()
                     else: st.error("❌ Datos incorrectos")
 
 # 3. APP PRINCIPAL
 else:
     datos = st.session_state['usuario_info']
-    
-    # --- BLINDAJE ANTI-ERROR (Safe Unpack) ---
     rol = str(datos.get('Rol', 'alumno')).strip()
     nombre = str(datos.get('Nombre', 'Usuario')).strip()
     alias = str(datos.get('Usuario', '')).strip()
     if nombre.lower() in ['nan', 'none', '']: nombre = "Usuario"
 
+    # --- BARRA LATERAL (CON BOTÓN SALIR AGREGADO) ---
     with st.sidebar:
         st.markdown(f"## {nombre.upper()}"); st.caption(f"ROL: {rol.upper()}")
         st.markdown("---")
         if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): st.cache_data.clear(); st.rerun()
-        if st.button("SALIR", use_container_width=True):
-            # Limpiamos todo: estado y URL
+        if st.button("CERRAR SESIÓN", use_container_width=True):
             st.session_state['logueado'] = False
             st.query_params.clear()
             st.rerun()
