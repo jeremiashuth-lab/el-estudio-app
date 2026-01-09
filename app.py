@@ -11,35 +11,29 @@ import calendar
 import time
 import re
 
-# --- 1. CONFIGURACIÓN DE PÁGINA (ESTABILIDAD) ---
+# --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
     page_title="El Estudio", 
     page_icon="🔥", 
     layout="wide", 
-    initial_sidebar_state="expanded" # Mantiene sidebar estable
+    initial_sidebar_state="expanded"
 )
 
-# --- 2. ESTILOS CSS "ANTI-SALTO" ---
+# --- 2. ESTILOS CSS (ANTI-SALTO) ---
 def cargar_estilos():
     st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;800&display=swap');
         html, body, [class*="css"] { 
             font-family: 'Montserrat', sans-serif; 
-            scroll-behavior: smooth; /* Suaviza el scroll */
+            scroll-behavior: smooth;
         }
         
-        /* Ajuste de márgenes para que no baile al abrir teclado */
-        .block-container { 
-            padding-top: 1.5rem; 
-            padding-bottom: 5rem; 
-        }
+        .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
 
-        /* Títulos estables */
         h1 { color: #E63946 !important; font-weight: 800 !important; letter-spacing: -1px; margin-bottom: 0.5rem; }
         h2, h3 { font-weight: 600 !important; margin-top: 1rem; }
         
-        /* Botones grandes y fáciles de tocar */
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 12px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
@@ -47,11 +41,8 @@ def cargar_estilos():
             transition: all 0.2s ease;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        div.stButton > button:first-child:active {
-            transform: scale(0.98);
-        }
+        div.stButton > button:first-child:active { transform: scale(0.98); }
         
-        /* Inputs más cómodos */
         input, textarea, select { font-size: 16px !important; border-radius: 8px !important; }
         
         /* Calendario Compacto */
@@ -65,6 +56,7 @@ def cargar_estilos():
         .day-completed { background-color: #2ECC71 !important; color: #000 !important; }
         .day-incomplete { background-color: #F39C12 !important; color: #000 !important; }
         
+        div[data-testid="stVerticalBlock"] { gap: 1rem; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -173,7 +165,6 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     cols = ["Alumno", "Dia", "Seccion", "Orden", "Ejercicio", "Link", "Series", "Reps", "Kg", "Notas"]
     nuevas_filas = []
     
-    # Helper para armar filas
     def procesar_df(df, seccion):
         df = df.fillna("")
         for _, row in df.iterrows():
@@ -193,7 +184,6 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     df_old = pd.DataFrame(all_data)
     if not df_old.empty:
         df_old.columns = [c.strip().capitalize() for c in df_old.columns]
-        # Borramos lo viejo de ESTE alumno y ESTE día
         mask = ~((df_old["Alumno"].astype(str).str.lower() == alumno.lower()) & (df_old["Dia"].astype(str) == dia))
         df_clean = df_old[mask]
         df_final = pd.concat([df_clean, pd.DataFrame(nuevas_filas)], ignore_index=True)
@@ -201,7 +191,6 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
         df_final = pd.DataFrame(nuevas_filas)
 
     df_final = df_final.fillna("")
-    # Asegurar columnas
     for c in cols: 
         if c not in df_final.columns: df_final[c] = ""
         
@@ -216,15 +205,18 @@ def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=Non
 def actualizar_registros_usuario(usuario, df_editado):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Registros")
-    # Lógica de borrado y actualización segura
     all_data = ws.get_all_records()
     df_all = pd.DataFrame(all_data)
-    df_all.columns = [c.strip().capitalize() for c in df_all.columns]
+    if df_all.empty: return
     
-    # Mantenemos registros de OTROS usuarios
+    df_all.columns = [c.strip().capitalize() for c in df_all.columns]
+    col_map = {c: c for c in df_all.columns}
+    for c in df_all.columns:
+        if c.lower() in ['user', 'alumno']: col_map[c] = 'Usuario'
+    df_all = df_all.rename(columns=col_map)
+    
     df_otros = df_all[df_all["Usuario"].astype(str).str.lower() != usuario.lower()]
     
-    # Procesamos los nuevos editados
     df_nuevos = df_editado.copy()
     if "Fecha" in df_nuevos.columns:
         df_nuevos["Fecha"] = pd.to_datetime(df_nuevos["Fecha"]).dt.strftime("%Y-%m-%d")
@@ -245,7 +237,6 @@ def preparar_df_editor(df_input, columnas, filas_minimas=4):
     for c in ["Series", "Reps", "Kg"]:
         if c in df_input.columns: df_input[c] = df_input[c].astype(str)
     
-    # Aseguramos filas mínimas para que el editor no "salte" de tamaño
     filas_actuales = len(df_input)
     if filas_actuales < filas_minimas:
         extras = pd.DataFrame([[""] * len(columnas)] * (filas_minimas - filas_actuales), columns=columnas)
@@ -254,20 +245,38 @@ def preparar_df_editor(df_input, columnas, filas_minimas=4):
 
 def generar_word(alumno, df_rutina):
     doc = Document()
-    doc.add_heading(f'RUTINA: {alumno.upper()}', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_titulo = doc.add_heading(f'RUTINA: {alumno.upper()}', 0)
+    p_titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph(f"Fecha: {datetime.now().strftime('%d/%m/%Y')}")
+    doc.add_paragraph("-" * 50)
+    
     for dia in df_rutina["Dia"].unique():
         doc.add_heading(dia, level=1)
         rutina_dia = df_rutina[df_rutina["Dia"] == dia]
-        for _, row in rutina_dia.iterrows():
-            ej = str(row['Ejercicio'])
-            if ej and ej != "":
-                txt = f"{ej} | {row.get('Series','')}x{row.get('Reps','')} | {row.get('Kg','')}"
-                doc.add_paragraph(txt, style='List Bullet')
+        
+        # Agrupar por sección para orden en Word
+        for sec in ["Calentamiento", "Fuerza", "Cardio"]:
+            df_sec = rutina_dia[rutina_dia["Seccion"] == sec]
+            if not df_sec.empty:
+                doc.add_heading(sec, level=2)
+                for _, row in df_sec.iterrows():
+                    ej = str(row['Ejercicio'])
+                    if ej and ej != "":
+                        detalle = f"{ej}"
+                        if str(row.get('Series','')): detalle += f" | {row.get('Series','')} series"
+                        if str(row.get('Reps','')): detalle += f" | {row.get('Reps','')} reps"
+                        if str(row.get('Kg','')) and str(row.get('Kg','')) != "-": detalle += f" | {row.get('Kg','')} kg"
+                        if str(row.get('Notas','')): detalle += f" ({row.get('Notas','')})"
+                        doc.add_paragraph(detalle, style='List Bullet')
+    
     b = BytesIO(); doc.save(b); b.seek(0); return b
 
 def render_calendar(year, month, df_sesiones):
+    # DEFINIMOS LOS MESES AQUÍ ADENTRO PARA EVITAR ERRORES DE SCOPE
+    nombres_meses = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    month_name = nombres_meses[month]
+    
     cal = calendar.monthcalendar(year, month)
-    month_name = MESES_ESP[month]
     asistencia_map = {}
     if not df_sesiones.empty:
         mask = (df_sesiones["Fecha"].dt.year == year) & (df_sesiones["Fecha"].dt.month == month)
@@ -295,6 +304,7 @@ if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 if not st.session_state['logueado']:
     params = st.query_params
     user_url = params.get("u", None)
+    
     if user_url:
         u_data = recuperar_usuario_por_nombre(user_url)
         if u_data is not None:
@@ -304,7 +314,6 @@ if not st.session_state['logueado']:
             st.query_params.clear()
 
 if not st.session_state['logueado']:
-    # PANTALLA LOGIN
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<br><br><h1 style='text-align: center;'>EL ESTUDIO 🔥</h1><br>", unsafe_allow_html=True)
@@ -348,7 +357,7 @@ else:
         tab1, tab2 = st.tabs(["DISEÑO", "ESTADÍSTICAS"])
         
         with tab1:
-            # Selector de Alumno y Día (Contenedor superior fijo)
+            # Selector de Alumno y Día
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 3, 1]) 
                 with c3: 
@@ -362,7 +371,6 @@ else:
             # Carga de Rutina
             rut = leer_rutina(alu)
             
-            # Dataframes vacíos base
             cols_c = ["Ejercicio", "Link", "Series", "Reps", "Notas"]
             cols_f = ["Orden", "Ejercicio", "Link", "Series", "Reps", "Kg", "Notas"]
             cols_ca = ["Ejercicio", "Link", "Series", "Reps", "Notas"]
