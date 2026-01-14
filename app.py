@@ -45,11 +45,18 @@ def cargar_estilos():
         }
         div.stButton > button:first-child:active { transform: scale(0.98); }
         
-        /* Inputs Anti-Zoom iPhone */
+        /* Inputs */
         input, textarea, select, div[data-baseweb="select"] { 
             font-size: 16px !important; 
             border-radius: 8px !important; 
             min-height: 45px;
+        }
+        
+        /* Estilo de Expander (Tarjetas) */
+        .streamlit-expanderHeader {
+            font-weight: 600;
+            background-color: #262730;
+            border-radius: 8px;
         }
         
         /* Calendario */
@@ -205,24 +212,39 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     ws.clear()
     ws.update([cols] + df_final[cols].values.tolist())
 
-def guardar_notas_alumno(alumno, dia, df_c_edit, df_f_edit, df_ca_edit, rut_original):
-    rut_hoy = rut_original[rut_original["Dia"] == dia].copy()
-    def actualizar_seccion(df_edit, seccion):
-        if df_edit.empty: return
-        subset = rut_hoy[rut_hoy["Seccion"] == seccion]
-        for idx, row in df_edit.iterrows():
-            ej = row["Ejercicio"]
-            mask = (rut_hoy["Seccion"] == seccion) & (rut_hoy["Ejercicio"] == ej)
-            if mask.any():
-                rut_hoy.loc[mask, "Notas"] = row.get("Notas", "")
-                if "Kg" in row: rut_hoy.loc[mask, "Kg"] = str(row.get("Kg", "")) # FORZAMOS STRING AL GUARDAR
-    actualizar_seccion(df_c_edit, "Calentamiento")
-    actualizar_seccion(df_f_edit, "Fuerza")
-    actualizar_seccion(df_ca_edit, "Cardio")
-    df_c_final = rut_hoy[rut_hoy["Seccion"] == "Calentamiento"]
-    df_f_final = rut_hoy[rut_hoy["Seccion"] == "Fuerza"]
-    df_ca_final = rut_hoy[rut_hoy["Seccion"] == "Cardio"]
-    guardar_rutina_actualizada(alumno, dia, df_c_final, df_f_final, df_ca_final)
+# FUNCIÓN PUENTE PARA GUARDAR DESDE TARJETAS
+def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
+    # Iteramos sobre el dataframe original del día para buscar los cambios en session_state
+    
+    # Listas para reconstruir los dataframes que espera la función de guardado
+    rows_c = []; rows_f = []; rows_ca = []
+    
+    for idx, row in rut_hoy.iterrows():
+        seccion = row["Seccion"]
+        # Claves únicas generadas en el loop de tarjetas
+        key_kg = f"kg_{idx}"
+        key_notas = f"notas_{idx}"
+        
+        # Recuperamos valores nuevos si existen en session_state, sino mantenemos el original
+        nuevo_kg = str(session_state.get(key_kg, row.get("Kg", "")))
+        nueva_nota = str(session_state.get(key_notas, row.get("Notas", "")))
+        
+        # Creamos la fila actualizada
+        new_row = row.copy()
+        new_row["Kg"] = nuevo_kg
+        new_row["Notas"] = nueva_nota
+        
+        if seccion == "Calentamiento": rows_c.append(new_row)
+        elif seccion == "Fuerza": rows_f.append(new_row)
+        elif seccion == "Cardio": rows_ca.append(new_row)
+        
+    # Convertimos a DataFrames
+    df_c = pd.DataFrame(rows_c) if rows_c else pd.DataFrame()
+    df_f = pd.DataFrame(rows_f) if rows_f else pd.DataFrame()
+    df_ca = pd.DataFrame(rows_ca) if rows_ca else pd.DataFrame()
+    
+    # Guardamos
+    guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca)
 
 def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=None):
     sh = conectar_google_sheet()
@@ -284,27 +306,21 @@ def preparar_df_editor(df_input, columnas, filas_minimas=4):
     return df_input
 
 def generar_word(alumno, df_rutina):
-    # GENERACIÓN DE WORD CON TABLAS PROLIJAS
     doc = Document()
     p_titulo = doc.add_heading(f'RUTINA: {alumno.upper()}', 0)
     p_titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y')}")
     doc.add_paragraph("-" * 50)
-    
     for dia in df_rutina["Dia"].unique():
         doc.add_heading(dia, level=1)
         rutina_dia = df_rutina[df_rutina["Dia"] == dia]
-        
         for sec in ["Calentamiento", "Fuerza", "Cardio"]:
             df_sec = rutina_dia[rutina_dia["Seccion"] == sec]
             if not df_sec.empty:
                 doc.add_heading(sec, level=2)
-                
-                # Crear tabla
                 cols_count = 5 if sec == "Fuerza" else 4
                 table = doc.add_table(rows=1, cols=cols_count)
                 table.style = 'Table Grid'
-                
                 hdr_cells = table.rows[0].cells
                 hdr_cells[0].text = 'EJERCICIO'
                 hdr_cells[1].text = 'SERIES'
@@ -314,27 +330,21 @@ def generar_word(alumno, df_rutina):
                     hdr_cells[4].text = 'NOTAS'
                 else:
                     hdr_cells[3].text = 'NOTAS'
-                
                 for _, row in df_sec.iterrows():
                     row_cells = table.add_row().cells
-                    
-                    # Nombre ejercicio (con Orden si es Fuerza)
                     nom_ej = str(row['Ejercicio'])
                     if sec == "Fuerza":
                         orden = str(row.get('Orden', '')).strip()
                         if orden and orden != '-': nom_ej = f"{orden}. {nom_ej}"
-                    
                     row_cells[0].text = nom_ej
                     row_cells[1].text = str(row.get('Series', ''))
                     row_cells[2].text = str(row.get('Reps', ''))
-                    
                     if sec == "Fuerza":
                         row_cells[3].text = str(row.get('Kg', ''))
                         row_cells[4].text = str(row.get('Notas', ''))
                     else:
                         row_cells[3].text = str(row.get('Notas', ''))
-                doc.add_paragraph("") # Espacio
-                
+                doc.add_paragraph("")
     b = BytesIO(); doc.save(b); b.seek(0); return b
 
 def render_calendar(year, month, df_sesiones):
@@ -359,6 +369,53 @@ def render_calendar(year, month, df_sesiones):
                 html += f'<div class="{css}">{day}</div>'
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
+
+# --- HELPER PARA RENDERIZAR TARJETAS ---
+def renderizar_bloque_seccion(titulo, df_seccion):
+    if not df_seccion.empty:
+        st.markdown(f"#### {titulo}")
+        for idx, row in df_seccion.iterrows():
+            # Construir título de la tarjeta
+            ej_nombre = row['Ejercicio']
+            series_reps = f"{row.get('Series','?')} x {row.get('Reps','?')}"
+            
+            orden_prefix = ""
+            if "Orden" in row and str(row["Orden"]).strip() not in ["", "-"]:
+                orden_prefix = f"**{row['Orden']}** | "
+            
+            titulo_card = f"{orden_prefix}{ej_nombre} ({series_reps})"
+            
+            # Tarjeta Desplegable
+            with st.expander(titulo_card):
+                # 1. Video (Si existe)
+                link = str(row.get('Link', '')).strip()
+                if link:
+                    st.link_button("📺 Ver Video", link, use_container_width=True)
+                
+                # 2. Notas del Entrenador (Solo lectura, si existen)
+                # Nota: Mostramos la nota guardada si el usuario no la ha editado aún,
+                # pero queremos que el campo de texto editable abajo sirva para AMBOS (leer y editar)
+                # o separamos? 
+                # Estrategia: El campo 'Notas' en la base de datos suele ser instrucciones del profe.
+                # Si el alumno edita, sobreescribe.
+                # Para evitar borrar instrucciones, mostramos la nota original arriba como info
+                # y dejamos el campo editable pre-llenado con lo mismo.
+                
+                # 3. Inputs de Edición (Kg y Notas)
+                c_kg, c_notas = st.columns([1, 2])
+                
+                val_kg = str(row.get('Kg', ''))
+                if val_kg == "nan": val_kg = ""
+                
+                val_notas = str(row.get('Notas', ''))
+                if val_notas == "nan": val_notas = ""
+
+                with c_kg:
+                    # Usamos keys únicos basados en el índice del dataframe original
+                    st.text_input("Kg Realizados", value=val_kg, key=f"kg_{idx}")
+                
+                with c_notas:
+                    st.text_area("Notas / Instrucciones", value=val_notas, key=f"notas_{idx}", height=68)
 
 # --- 6. GESTIÓN DE LOGIN ---
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
@@ -508,85 +565,24 @@ else:
                 
                 r_hoy = rut[rut["Dia"] == d_hoy]
                 
-                notas_importantes = []
-                for idx, row in r_hoy.iterrows():
-                    if str(row.get('Notas','')).strip() != "":
-                        notas_importantes.append(f"**{row['Ejercicio']}**: {row['Notas']}")
+                # --- NUEVA VISTA: TARJETAS DESPLEGABLES ---
                 
-                if notas_importantes:
-                    st.info("📝 **NOTAS:**\n\n" + "\n".join([f"- {n}" for n in notas_importantes]))
+                # Separamos por secciones para mantener orden
+                df_sec_c = r_hoy[r_hoy["Seccion"] == "Calentamiento"]
+                df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"]
+                df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
 
-                # --- CONFIGURACIÓN DE COLUMNAS ---
-                cfg_orden = st.column_config.TextColumn("Ord", width="small", disabled=True)
-                cfg_sxr = st.column_config.TextColumn("SxR", width="small", disabled=True)
-                cfg_static = st.column_config.TextColumn(width="medium", disabled=True)
-                cfg_link = st.column_config.LinkColumn("Video", display_text="📺", width="small", disabled=True)
-                # KILOS COMO TEXTCOLUMN PURO PARA EVITAR BLOQUEOS
-                cfg_kg = st.column_config.TextColumn("Kg", width="small")
-                cfg_notas = st.column_config.TextColumn("Notas (Editable)", width="large")
+                # Renderizamos bloques
+                renderizar_bloque_seccion("🔥 Calentamiento", df_sec_c)
+                renderizar_bloque_seccion("🏋️‍♂️ Fuerza", df_sec_f)
+                renderizar_bloque_seccion("🏃‍♂️ Cardio", df_sec_ca)
 
-                ed_c_alu = pd.DataFrame(); ed_f_alu = pd.DataFrame(); ed_ca_alu = pd.DataFrame()
-
-                # CALENTAMIENTO
-                df_sec_c = r_hoy[r_hoy["Seccion"] == "Calentamiento"].copy()
-                if not df_sec_c.empty:
-                    st.markdown("#### 🔥 Calentamiento")
-                    df_sec_c["SxR"] = df_sec_c["Series"].astype(str) + " x " + df_sec_c["Reps"].astype(str)
-                    
-                    # LOGICA VIDEO CONDICIONAL
-                    has_video = df_sec_c["Link"].str.strip().astype(bool).any()
-                    cols_c = ["Ejercicio", "SxR", "Notas"]
-                    if has_video: cols_c.insert(2, "Link")
-
-                    ed_c_alu = st.data_editor(
-                        df_sec_c[cols_c], key=f"ed_c_{d_hoy}", hide_index=True, 
-                        use_container_width=True, num_rows="fixed",
-                        column_config={"Ejercicio": cfg_static, "SxR": cfg_sxr, "Link": cfg_link, "Notas": cfg_notas}
-                    )
-                
-                # FUERZA
-                df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"].copy()
-                if not df_sec_f.empty:
-                    st.markdown("#### 🏋️‍♂️ Fuerza")
-                    df_sec_f["SxR"] = df_sec_f["Series"].astype(str) + " x " + df_sec_f["Reps"].astype(str)
-                    
-                    # FORZAR KG A STRING PARA EVITAR ERRORES DE EDICIÓN
-                    df_sec_f["Kg"] = df_sec_f["Kg"].astype(str)
-                    
-                    # LOGICA VIDEO CONDICIONAL
-                    has_video = df_sec_f["Link"].str.strip().astype(bool).any()
-                    cols_f = ["Orden", "Ejercicio", "SxR", "Kg", "Notas"]
-                    if has_video: cols_f.insert(4, "Link")
-                    
-                    ed_f_alu = st.data_editor(
-                        df_sec_f[cols_f], key=f"ed_f_{d_hoy}", hide_index=True, 
-                        use_container_width=True, num_rows="fixed",
-                        column_config={
-                            "Orden": cfg_orden, "Ejercicio": cfg_static, "SxR": cfg_sxr, 
-                            "Kg": cfg_kg, "Link": cfg_link, "Notas": cfg_notas
-                        }
-                    )
-                
-                # CARDIO
-                df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"].copy()
-                if not df_sec_ca.empty:
-                    st.markdown("#### 🏃‍♂️ Cardio")
-                    df_sec_ca["SxR"] = df_sec_ca["Series"].astype(str) + " x " + df_sec_ca["Reps"].astype(str)
-                    
-                    # LOGICA VIDEO CONDICIONAL
-                    has_video = df_sec_ca["Link"].str.strip().astype(bool).any()
-                    cols_ca = ["Ejercicio", "SxR", "Notas"]
-                    if has_video: cols_ca.insert(2, "Link")
-
-                    ed_ca_alu = st.data_editor(
-                        df_sec_ca[cols_ca], key=f"ed_ca_{d_hoy}", hide_index=True, 
-                        use_container_width=True, num_rows="fixed",
-                        column_config={"Ejercicio": cfg_static, "SxR": cfg_sxr, "Link": cfg_link, "Notas": cfg_notas}
-                    )
-
-                if st.button("💾 GUARDAR MIS NOTAS", use_container_width=True):
-                    guardar_notas_alumno(alias, d_hoy, ed_c_alu, ed_f_alu, ed_ca_alu, rut)
-                    st.toast("✅ Notas guardadas!"); time.sleep(1)
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("💾 GUARDAR CAMBIOS EN LA RUTINA", type="primary", use_container_width=True):
+                    guardar_desde_tarjetas(alias, d_hoy, r_hoy, st.session_state)
+                    st.toast("✅ Notas y Kilos guardados!")
+                    time.sleep(1)
+                    st.rerun()
 
                 st.markdown("---")
                 st.subheader("📝 Bitácora (Series Efectivas)")
@@ -607,7 +603,7 @@ else:
                         st.cache_data.clear(); st.success("Guardado!"); time.sleep(1)
 
                 c_ok, c_fail = st.columns(2)
-                if c_ok.button("✅ TERMINÉ POR HOY", use_container_width=True, type="primary"):
+                if c_ok.button("✅ TERMINÉ POR HOY", use_container_width=True):
                     guardar_estado_sesion(alias, "Completado"); st.cache_data.clear(); st.balloons()
                 if c_fail.button("⚠️ INCOMPLETO", use_container_width=True):
                     guardar_estado_sesion(alias, "Incompleto"); st.cache_data.clear()
