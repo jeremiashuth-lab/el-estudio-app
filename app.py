@@ -19,13 +19,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. ESTILOS CSS ---
+# --- 2. ESTILOS CSS (ESTABILIDAD IPHONE) ---
 def cargar_estilos():
     st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;800&display=swap');
         html, body, [class*="css"] { 
             font-family: 'Montserrat', sans-serif; 
+            -webkit-text-size-adjust: 100%; /* Previene ajustes raros en iOS */
         }
         
         .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
@@ -33,7 +34,7 @@ def cargar_estilos():
         h1 { color: #E63946 !important; font-weight: 800 !important; letter-spacing: -1px; margin-bottom: 0.5rem; }
         h2, h3 { font-weight: 600 !important; margin-top: 1rem; }
         
-        /* Botones */
+        /* Botones estables */
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 12px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
@@ -43,7 +44,7 @@ def cargar_estilos():
         }
         div.stButton > button:first-child:active { transform: scale(0.98); }
         
-        /* Inputs */
+        /* Inputs Anti-Zoom para iPhone (16px mínimo) */
         input, textarea, select, div[data-baseweb="select"] { 
             font-size: 16px !important; 
             border-radius: 8px !important; 
@@ -202,6 +203,35 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
         
     ws.clear()
     ws.update([cols] + df_final[cols].values.tolist())
+
+# FUNCIÓN INTELIGENTE PARA GUARDAR NOTAS DE ALUMNO CON TABLA COMPACTA
+def guardar_notas_alumno(alumno, dia, df_c_edit, df_f_edit, df_ca_edit, rut_original):
+    # Recuperamos los datos originales (separados) y solo actualizamos Notas y Kg
+    rut_hoy = rut_original[rut_original["Dia"] == dia].copy()
+    
+    # Mapeo por ejercicio para actualizar
+    def actualizar_seccion(df_edit, seccion):
+        if df_edit.empty: return
+        subset = rut_hoy[rut_hoy["Seccion"] == seccion]
+        for idx, row in df_edit.iterrows():
+            ej = row["Ejercicio"]
+            # Buscamos fila en original
+            mask = (rut_hoy["Seccion"] == seccion) & (rut_hoy["Ejercicio"] == ej)
+            if mask.any():
+                rut_hoy.loc[mask, "Notas"] = row.get("Notas", "")
+                if "Kg" in row: rut_hoy.loc[mask, "Kg"] = row.get("Kg", "")
+
+    actualizar_seccion(df_c_edit, "Calentamiento")
+    actualizar_seccion(df_f_edit, "Fuerza")
+    actualizar_seccion(df_ca_edit, "Cardio")
+    
+    # Separamos en los 3 dfs que pide la función guardar_rutina_actualizada
+    df_c_final = rut_hoy[rut_hoy["Seccion"] == "Calentamiento"]
+    df_f_final = rut_hoy[rut_hoy["Seccion"] == "Fuerza"]
+    df_ca_final = rut_hoy[rut_hoy["Seccion"] == "Cardio"]
+    
+    guardar_rutina_actualizada(alumno, dia, df_c_final, df_f_final, df_ca_final)
+
 
 def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=None):
     sh = conectar_google_sheet()
@@ -457,7 +487,6 @@ else:
                 
                 r_hoy = rut[rut["Dia"] == d_hoy]
                 
-                # --- VISUALIZACIÓN DE NOTAS ---
                 notas_importantes = []
                 for idx, row in r_hoy.iterrows():
                     if str(row.get('Notas','')).strip() != "":
@@ -466,48 +495,62 @@ else:
                 if notas_importantes:
                     st.info("📝 **NOTAS:**\n\n" + "\n".join([f"- {n}" for n in notas_importantes]))
 
-                # --- TABLAS ---
-                cfg_static = st.column_config.TextColumn(disabled=True)
-                cfg_link = st.column_config.LinkColumn("Video", display_text="📺", disabled=True)
+                # --- CONFIGURACIÓN DE COLUMNAS ESTABLES PARA IPHONE ---
+                cfg_orden = st.column_config.TextColumn("Ord", width="small", disabled=True)
+                cfg_sxr = st.column_config.TextColumn("SxR", width="small", disabled=True)
+                cfg_static = st.column_config.TextColumn(width="medium", disabled=True)
+                cfg_link = st.column_config.LinkColumn("Video", display_text="📺", width="small", disabled=True)
                 cfg_notas = st.column_config.TextColumn("Notas (Editable)", width="large")
-                
+                cfg_kg = st.column_config.TextColumn("Kg", width="small")
+
                 ed_c_alu = pd.DataFrame(); ed_f_alu = pd.DataFrame(); ed_ca_alu = pd.DataFrame()
 
-                df_sec_c = r_hoy[r_hoy["Seccion"] == "Calentamiento"]
+                # CALENTAMIENTO
+                df_sec_c = r_hoy[r_hoy["Seccion"] == "Calentamiento"].copy()
                 if not df_sec_c.empty:
                     st.markdown("#### Calentamiento")
-                    cols_c = ["Ejercicio", "Series", "Reps", "Link", "Notas"]
+                    # Fusión de columnas para reducir espacio
+                    df_sec_c["SxR"] = df_sec_c["Series"].astype(str) + " x " + df_sec_c["Reps"].astype(str)
+                    cols_c = ["Ejercicio", "SxR", "Link", "Notas"]
+                    
                     ed_c_alu = st.data_editor(
-                        df_sec_c[cols_c], key=f"ed_c_{d_hoy}", hide_index=True, use_container_width=True,
-                        column_config={"Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Notas": cfg_notas}
+                        df_sec_c[cols_c], key=f"ed_c_{d_hoy}", hide_index=True, 
+                        use_container_width=True, num_rows="fixed", # ESTABILIDAD
+                        column_config={"Ejercicio": cfg_static, "SxR": cfg_sxr, "Link": cfg_link, "Notas": cfg_notas}
                     )
                 
-                df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"]
+                # FUERZA
+                df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"].copy()
                 if not df_sec_f.empty:
                     st.markdown("#### Fuerza")
-                    # AQUI ESTA LA CORRECCION DEL ORDEN (VERSION 49)
-                    cols_f = ["Orden", "Ejercicio", "Series", "Reps", "Kg", "Link", "Notas"]
+                    df_sec_f["SxR"] = df_sec_f["Series"].astype(str) + " x " + df_sec_f["Reps"].astype(str)
+                    cols_f = ["Orden", "Ejercicio", "SxR", "Kg", "Link", "Notas"]
+                    
                     ed_f_alu = st.data_editor(
-                        df_sec_f[cols_f], key=f"ed_f_{d_hoy}", hide_index=True, use_container_width=True,
+                        df_sec_f[cols_f], key=f"ed_f_{d_hoy}", hide_index=True, 
+                        use_container_width=True, num_rows="fixed", # ESTABILIDAD
                         column_config={
-                            "Orden": cfg_static, # Orden visible pero bloqueado
-                            "Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, 
-                            "Kg": st.column_config.TextColumn("Kg (Editable)"), "Notas": cfg_notas
+                            "Orden": cfg_orden, "Ejercicio": cfg_static, "SxR": cfg_sxr, 
+                            "Kg": cfg_kg, "Link": cfg_link, "Notas": cfg_notas
                         }
                     )
                 
-                df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
+                # CARDIO
+                df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"].copy()
                 if not df_sec_ca.empty:
                     st.markdown("#### Cardio")
-                    cols_ca = ["Ejercicio", "Series", "Reps", "Link", "Notas"]
+                    df_sec_ca["SxR"] = df_sec_ca["Series"].astype(str) + " x " + df_sec_ca["Reps"].astype(str)
+                    cols_ca = ["Ejercicio", "SxR", "Link", "Notas"]
+                    
                     ed_ca_alu = st.data_editor(
-                        df_sec_ca[cols_ca], key=f"ed_ca_{d_hoy}", hide_index=True, use_container_width=True,
-                        column_config={"Ejercicio": cfg_static, "Series": cfg_static, "Reps": cfg_static, "Link": cfg_link, "Notas": cfg_notas}
+                        df_sec_ca[cols_ca], key=f"ed_ca_{d_hoy}", hide_index=True, 
+                        use_container_width=True, num_rows="fixed", # ESTABILIDAD
+                        column_config={"Ejercicio": cfg_static, "SxR": cfg_sxr, "Link": cfg_link, "Notas": cfg_notas}
                     )
 
                 if st.button("💾 GUARDAR MIS NOTAS EN LA RUTINA", use_container_width=True):
-                    # No necesitamos recalcular el Orden si ya viene en el dataframe
-                    guardar_rutina_actualizada(alias, d_hoy, ed_c_alu, ed_f_alu, ed_ca_alu)
+                    # Usamos la función inteligente que mapea los cambios de vuelta al formato original
+                    guardar_notas_alumno(alias, d_hoy, ed_c_alu, ed_f_alu, ed_ca_alu, rut)
                     st.toast("✅ Notas guardadas en tu plan!"); time.sleep(1)
 
                 st.markdown("---")
