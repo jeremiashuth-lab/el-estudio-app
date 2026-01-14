@@ -6,6 +6,7 @@ from google.oauth2.service_account import Credentials
 import os
 from io import BytesIO
 from docx import Document
+from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import calendar
 import time
@@ -19,14 +20,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. ESTILOS CSS (ESTABILIDAD IPHONE) ---
+# --- 2. ESTILOS CSS ---
 def cargar_estilos():
     st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;800&display=swap');
         html, body, [class*="css"] { 
             font-family: 'Montserrat', sans-serif; 
-            -webkit-text-size-adjust: 100%; /* Previene ajustes raros en iOS */
+            -webkit-text-size-adjust: 100%;
         }
         
         .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
@@ -34,7 +35,7 @@ def cargar_estilos():
         h1 { color: #E63946 !important; font-weight: 800 !important; letter-spacing: -1px; margin-bottom: 0.5rem; }
         h2, h3 { font-weight: 600 !important; margin-top: 1rem; }
         
-        /* Botones estables */
+        /* Botones */
         div.stButton > button:first-child {
             background-color: #E63946; color: white; border-radius: 12px; border: none;
             font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
@@ -44,7 +45,7 @@ def cargar_estilos():
         }
         div.stButton > button:first-child:active { transform: scale(0.98); }
         
-        /* Inputs Anti-Zoom para iPhone (16px mínimo) */
+        /* Inputs Anti-Zoom iPhone */
         input, textarea, select, div[data-baseweb="select"] { 
             font-size: 16px !important; 
             border-radius: 8px !important; 
@@ -204,34 +205,24 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     ws.clear()
     ws.update([cols] + df_final[cols].values.tolist())
 
-# FUNCIÓN INTELIGENTE PARA GUARDAR NOTAS DE ALUMNO CON TABLA COMPACTA
 def guardar_notas_alumno(alumno, dia, df_c_edit, df_f_edit, df_ca_edit, rut_original):
-    # Recuperamos los datos originales (separados) y solo actualizamos Notas y Kg
     rut_hoy = rut_original[rut_original["Dia"] == dia].copy()
-    
-    # Mapeo por ejercicio para actualizar
     def actualizar_seccion(df_edit, seccion):
         if df_edit.empty: return
         subset = rut_hoy[rut_hoy["Seccion"] == seccion]
         for idx, row in df_edit.iterrows():
             ej = row["Ejercicio"]
-            # Buscamos fila en original
             mask = (rut_hoy["Seccion"] == seccion) & (rut_hoy["Ejercicio"] == ej)
             if mask.any():
                 rut_hoy.loc[mask, "Notas"] = row.get("Notas", "")
-                if "Kg" in row: rut_hoy.loc[mask, "Kg"] = row.get("Kg", "")
-
+                if "Kg" in row: rut_hoy.loc[mask, "Kg"] = str(row.get("Kg", "")) # FORZAMOS STRING AL GUARDAR
     actualizar_seccion(df_c_edit, "Calentamiento")
     actualizar_seccion(df_f_edit, "Fuerza")
     actualizar_seccion(df_ca_edit, "Cardio")
-    
-    # Separamos en los 3 dfs que pide la función guardar_rutina_actualizada
     df_c_final = rut_hoy[rut_hoy["Seccion"] == "Calentamiento"]
     df_f_final = rut_hoy[rut_hoy["Seccion"] == "Fuerza"]
     df_ca_final = rut_hoy[rut_hoy["Seccion"] == "Cardio"]
-    
     guardar_rutina_actualizada(alumno, dia, df_c_final, df_f_final, df_ca_final)
-
 
 def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=None):
     sh = conectar_google_sheet()
@@ -293,27 +284,57 @@ def preparar_df_editor(df_input, columnas, filas_minimas=4):
     return df_input
 
 def generar_word(alumno, df_rutina):
+    # GENERACIÓN DE WORD CON TABLAS PROLIJAS
     doc = Document()
     p_titulo = doc.add_heading(f'RUTINA: {alumno.upper()}', 0)
     p_titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph(f"Fecha: {datetime.now().strftime('%d/%m/%Y')}")
+    doc.add_paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y')}")
     doc.add_paragraph("-" * 50)
+    
     for dia in df_rutina["Dia"].unique():
         doc.add_heading(dia, level=1)
         rutina_dia = df_rutina[df_rutina["Dia"] == dia]
+        
         for sec in ["Calentamiento", "Fuerza", "Cardio"]:
             df_sec = rutina_dia[rutina_dia["Seccion"] == sec]
             if not df_sec.empty:
                 doc.add_heading(sec, level=2)
+                
+                # Crear tabla
+                cols_count = 5 if sec == "Fuerza" else 4
+                table = doc.add_table(rows=1, cols=cols_count)
+                table.style = 'Table Grid'
+                
+                hdr_cells = table.rows[0].cells
+                hdr_cells[0].text = 'EJERCICIO'
+                hdr_cells[1].text = 'SERIES'
+                hdr_cells[2].text = 'REPS'
+                if sec == "Fuerza":
+                    hdr_cells[3].text = 'KG'
+                    hdr_cells[4].text = 'NOTAS'
+                else:
+                    hdr_cells[3].text = 'NOTAS'
+                
                 for _, row in df_sec.iterrows():
-                    ej = str(row['Ejercicio'])
-                    if ej and ej != "":
-                        detalle = f"{ej}"
-                        if str(row.get('Series','')): detalle += f" | {row.get('Series','')} series"
-                        if str(row.get('Reps','')): detalle += f" | {row.get('Reps','')} reps"
-                        if str(row.get('Kg','')) and str(row.get('Kg','')) != "-": detalle += f" | {row.get('Kg','')} kg"
-                        if str(row.get('Notas','')): detalle += f" ({row.get('Notas','')})"
-                        doc.add_paragraph(detalle, style='List Bullet')
+                    row_cells = table.add_row().cells
+                    
+                    # Nombre ejercicio (con Orden si es Fuerza)
+                    nom_ej = str(row['Ejercicio'])
+                    if sec == "Fuerza":
+                        orden = str(row.get('Orden', '')).strip()
+                        if orden and orden != '-': nom_ej = f"{orden}. {nom_ej}"
+                    
+                    row_cells[0].text = nom_ej
+                    row_cells[1].text = str(row.get('Series', ''))
+                    row_cells[2].text = str(row.get('Reps', ''))
+                    
+                    if sec == "Fuerza":
+                        row_cells[3].text = str(row.get('Kg', ''))
+                        row_cells[4].text = str(row.get('Notas', ''))
+                    else:
+                        row_cells[3].text = str(row.get('Notas', ''))
+                doc.add_paragraph("") # Espacio
+                
     b = BytesIO(); doc.save(b); b.seek(0); return b
 
 def render_calendar(year, month, df_sesiones):
@@ -381,12 +402,12 @@ else:
         st.divider()
         if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): 
             st.cache_data.clear(); st.rerun()
-        if st.button("CERRAR SESIÓN", use_container_width=True):
+        if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
             st.session_state['logueado'] = False; st.query_params.clear(); st.rerun()
 
     if rol == "admin":
-        st.title("PANEL DE CONTROL")
-        tab1, tab2 = st.tabs(["DISEÑO", "ESTADÍSTICAS"])
+        st.title("🎛️ PANEL DE CONTROL")
+        tab1, tab2 = st.tabs(["📝 DISEÑO", "📊 ESTADÍSTICAS"])
         with tab1:
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 3, 1]) 
@@ -421,7 +442,7 @@ else:
             d_car = preparar_df_editor(d_car, cols_ca, filas_minimas=3)
             col_link = st.column_config.LinkColumn("Link", display_text="🔗")
             
-            with st.expander("EDITOR DE RUTINA", expanded=True):
+            with st.expander("✏️ EDITOR DE RUTINA", expanded=True):
                 st.caption("CALENTAMIENTO")
                 ed_c = st.data_editor(d_cal, num_rows="dynamic", use_container_width=True, key=f"c_{alu}_{dia}", column_config={"Link": col_link})
                 st.caption("FUERZA")
@@ -471,7 +492,7 @@ else:
     else:
         # VISTA ALUMNO
         st.title(f"RUTINA DE {nombre.upper()}")
-        t1, t2 = st.tabs(["ENTRENAR", "PROGRESO"])
+        t1, t2 = st.tabs(["💪 ENTRENAR", "📈 PROGRESO"])
         
         with t1:
             rut = leer_rutina(alias)
@@ -495,40 +516,51 @@ else:
                 if notas_importantes:
                     st.info("📝 **NOTAS:**\n\n" + "\n".join([f"- {n}" for n in notas_importantes]))
 
-                # --- CONFIGURACIÓN DE COLUMNAS ESTABLES PARA IPHONE ---
+                # --- CONFIGURACIÓN DE COLUMNAS ---
                 cfg_orden = st.column_config.TextColumn("Ord", width="small", disabled=True)
                 cfg_sxr = st.column_config.TextColumn("SxR", width="small", disabled=True)
                 cfg_static = st.column_config.TextColumn(width="medium", disabled=True)
                 cfg_link = st.column_config.LinkColumn("Video", display_text="📺", width="small", disabled=True)
-                cfg_notas = st.column_config.TextColumn("Notas (Editable)", width="large")
+                # KILOS COMO TEXTCOLUMN PURO PARA EVITAR BLOQUEOS
                 cfg_kg = st.column_config.TextColumn("Kg", width="small")
+                cfg_notas = st.column_config.TextColumn("Notas (Editable)", width="large")
 
                 ed_c_alu = pd.DataFrame(); ed_f_alu = pd.DataFrame(); ed_ca_alu = pd.DataFrame()
 
                 # CALENTAMIENTO
                 df_sec_c = r_hoy[r_hoy["Seccion"] == "Calentamiento"].copy()
                 if not df_sec_c.empty:
-                    st.markdown("#### Calentamiento")
-                    # Fusión de columnas para reducir espacio
+                    st.markdown("#### 🔥 Calentamiento")
                     df_sec_c["SxR"] = df_sec_c["Series"].astype(str) + " x " + df_sec_c["Reps"].astype(str)
-                    cols_c = ["Ejercicio", "SxR", "Link", "Notas"]
                     
+                    # LOGICA VIDEO CONDICIONAL
+                    has_video = df_sec_c["Link"].str.strip().astype(bool).any()
+                    cols_c = ["Ejercicio", "SxR", "Notas"]
+                    if has_video: cols_c.insert(2, "Link")
+
                     ed_c_alu = st.data_editor(
                         df_sec_c[cols_c], key=f"ed_c_{d_hoy}", hide_index=True, 
-                        use_container_width=True, num_rows="fixed", # ESTABILIDAD
+                        use_container_width=True, num_rows="fixed",
                         column_config={"Ejercicio": cfg_static, "SxR": cfg_sxr, "Link": cfg_link, "Notas": cfg_notas}
                     )
                 
                 # FUERZA
                 df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"].copy()
                 if not df_sec_f.empty:
-                    st.markdown("#### Fuerza")
+                    st.markdown("#### 🏋️‍♂️ Fuerza")
                     df_sec_f["SxR"] = df_sec_f["Series"].astype(str) + " x " + df_sec_f["Reps"].astype(str)
-                    cols_f = ["Orden", "Ejercicio", "SxR", "Kg", "Link", "Notas"]
+                    
+                    # FORZAR KG A STRING PARA EVITAR ERRORES DE EDICIÓN
+                    df_sec_f["Kg"] = df_sec_f["Kg"].astype(str)
+                    
+                    # LOGICA VIDEO CONDICIONAL
+                    has_video = df_sec_f["Link"].str.strip().astype(bool).any()
+                    cols_f = ["Orden", "Ejercicio", "SxR", "Kg", "Notas"]
+                    if has_video: cols_f.insert(4, "Link")
                     
                     ed_f_alu = st.data_editor(
                         df_sec_f[cols_f], key=f"ed_f_{d_hoy}", hide_index=True, 
-                        use_container_width=True, num_rows="fixed", # ESTABILIDAD
+                        use_container_width=True, num_rows="fixed",
                         column_config={
                             "Orden": cfg_orden, "Ejercicio": cfg_static, "SxR": cfg_sxr, 
                             "Kg": cfg_kg, "Link": cfg_link, "Notas": cfg_notas
@@ -538,20 +570,23 @@ else:
                 # CARDIO
                 df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"].copy()
                 if not df_sec_ca.empty:
-                    st.markdown("#### Cardio")
+                    st.markdown("#### 🏃‍♂️ Cardio")
                     df_sec_ca["SxR"] = df_sec_ca["Series"].astype(str) + " x " + df_sec_ca["Reps"].astype(str)
-                    cols_ca = ["Ejercicio", "SxR", "Link", "Notas"]
                     
+                    # LOGICA VIDEO CONDICIONAL
+                    has_video = df_sec_ca["Link"].str.strip().astype(bool).any()
+                    cols_ca = ["Ejercicio", "SxR", "Notas"]
+                    if has_video: cols_ca.insert(2, "Link")
+
                     ed_ca_alu = st.data_editor(
                         df_sec_ca[cols_ca], key=f"ed_ca_{d_hoy}", hide_index=True, 
-                        use_container_width=True, num_rows="fixed", # ESTABILIDAD
+                        use_container_width=True, num_rows="fixed",
                         column_config={"Ejercicio": cfg_static, "SxR": cfg_sxr, "Link": cfg_link, "Notas": cfg_notas}
                     )
 
-                if st.button("💾 GUARDAR MIS NOTAS EN LA RUTINA", use_container_width=True):
-                    # Usamos la función inteligente que mapea los cambios de vuelta al formato original
+                if st.button("💾 GUARDAR MIS NOTAS", use_container_width=True):
                     guardar_notas_alumno(alias, d_hoy, ed_c_alu, ed_f_alu, ed_ca_alu, rut)
-                    st.toast("✅ Notas guardadas en tu plan!"); time.sleep(1)
+                    st.toast("✅ Notas guardadas!"); time.sleep(1)
 
                 st.markdown("---")
                 st.subheader("📝 Bitácora (Series Efectivas)")
@@ -579,10 +614,9 @@ else:
             else: st.info("No tienes rutina asignada aún.")
 
         with t2:
-            st.markdown("### Mi Constancia")
+            st.markdown("### 📊 Mi Constancia")
             dfs = leer_sesiones_alumno(alias)
             
-            # --- SELECTOR DE FECHA (CALENDARIO) ---
             MESES_LIST = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
             c_sel_m, c_sel_y = st.columns([2, 1])
             mes_actual_idx = datetime.now().month
@@ -601,7 +635,7 @@ else:
             render_calendar(int(sel_anio), sel_mes_idx, dfs)
             
             st.markdown("---")
-            st.markdown("### Mi Progreso")
+            st.markdown("### 📈 Mi Progreso")
             modo_edicion = st.radio("Modo de Edición:", ["📝 Móvil (Fácil)", "📊 PC (Tabla)"], horizontal=True)
             df_r = leer_registros_alumno(alias)
             if not df_r.empty:
