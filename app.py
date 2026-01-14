@@ -212,38 +212,42 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     ws.clear()
     ws.update([cols] + df_final[cols].values.tolist())
 
-# FUNCIÓN PUENTE PARA GUARDAR DESDE TARJETAS
+def guardar_notas_alumno(alumno, dia, df_c_edit, df_f_edit, df_ca_edit, rut_original):
+    rut_hoy = rut_original[rut_original["Dia"] == dia].copy()
+    def actualizar_seccion(df_edit, seccion):
+        if df_edit.empty: return
+        subset = rut_hoy[rut_hoy["Seccion"] == seccion]
+        for idx, row in df_edit.iterrows():
+            ej = row["Ejercicio"]
+            mask = (rut_hoy["Seccion"] == seccion) & (rut_hoy["Ejercicio"] == ej)
+            if mask.any():
+                rut_hoy.loc[mask, "Notas"] = row.get("Notas", "")
+                if "Kg" in row: rut_hoy.loc[mask, "Kg"] = str(row.get("Kg", ""))
+    actualizar_seccion(df_c_edit, "Calentamiento")
+    actualizar_seccion(df_f_edit, "Fuerza")
+    actualizar_seccion(df_ca_edit, "Cardio")
+    df_c_final = rut_hoy[rut_hoy["Seccion"] == "Calentamiento"]
+    df_f_final = rut_hoy[rut_hoy["Seccion"] == "Fuerza"]
+    df_ca_final = rut_hoy[rut_hoy["Seccion"] == "Cardio"]
+    guardar_rutina_actualizada(alumno, dia, df_c_final, df_f_final, df_ca_final)
+
 def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
-    # Iteramos sobre el dataframe original del día para buscar los cambios en session_state
-    
-    # Listas para reconstruir los dataframes que espera la función de guardado
     rows_c = []; rows_f = []; rows_ca = []
-    
     for idx, row in rut_hoy.iterrows():
         seccion = row["Seccion"]
-        # Claves únicas generadas en el loop de tarjetas
         key_kg = f"kg_{idx}"
         key_notas = f"notas_{idx}"
-        
-        # Recuperamos valores nuevos si existen en session_state, sino mantenemos el original
         nuevo_kg = str(session_state.get(key_kg, row.get("Kg", "")))
         nueva_nota = str(session_state.get(key_notas, row.get("Notas", "")))
-        
-        # Creamos la fila actualizada
         new_row = row.copy()
         new_row["Kg"] = nuevo_kg
         new_row["Notas"] = nueva_nota
-        
         if seccion == "Calentamiento": rows_c.append(new_row)
         elif seccion == "Fuerza": rows_f.append(new_row)
         elif seccion == "Cardio": rows_ca.append(new_row)
-        
-    # Convertimos a DataFrames
     df_c = pd.DataFrame(rows_c) if rows_c else pd.DataFrame()
     df_f = pd.DataFrame(rows_f) if rows_f else pd.DataFrame()
     df_ca = pd.DataFrame(rows_ca) if rows_ca else pd.DataFrame()
-    
-    # Guardamos
     guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca)
 
 def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=None):
@@ -289,11 +293,12 @@ def actualizar_registros_masivo(usuario, df_editado):
     ws.clear()
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
 
-def guardar_estado_sesion(usuario, estado):
+# --- MODIFICADO: Ahora acepta fecha opcional para registros pasados ---
+def guardar_estado_sesion(usuario, estado, fecha_dt=None):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Sesiones")
-    hoy = datetime.now().strftime("%Y-%m-%d")
-    ws.append_row([hoy, usuario, estado])
+    fecha_str = fecha_dt.strftime("%Y-%m-%d") if fecha_dt else datetime.now().strftime("%Y-%m-%d")
+    ws.append_row([fecha_str, usuario, estado])
 
 def preparar_df_editor(df_input, columnas, filas_minimas=4):
     if df_input.empty: df_input = pd.DataFrame(columns=columnas)
@@ -370,52 +375,26 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- HELPER PARA RENDERIZAR TARJETAS ---
 def renderizar_bloque_seccion(titulo, df_seccion):
     if not df_seccion.empty:
         st.markdown(f"#### {titulo}")
         for idx, row in df_seccion.iterrows():
-            # Construir título de la tarjeta
             ej_nombre = row['Ejercicio']
             series_reps = f"{row.get('Series','?')} x {row.get('Reps','?')}"
-            
             orden_prefix = ""
             if "Orden" in row and str(row["Orden"]).strip() not in ["", "-"]:
                 orden_prefix = f"**{row['Orden']}** | "
-            
             titulo_card = f"{orden_prefix}{ej_nombre} ({series_reps})"
-            
-            # Tarjeta Desplegable
             with st.expander(titulo_card):
-                # 1. Video (Si existe)
                 link = str(row.get('Link', '')).strip()
-                if link:
-                    st.link_button("📺 Ver Video", link, use_container_width=True)
-                
-                # 2. Notas del Entrenador (Solo lectura, si existen)
-                # Nota: Mostramos la nota guardada si el usuario no la ha editado aún,
-                # pero queremos que el campo de texto editable abajo sirva para AMBOS (leer y editar)
-                # o separamos? 
-                # Estrategia: El campo 'Notas' en la base de datos suele ser instrucciones del profe.
-                # Si el alumno edita, sobreescribe.
-                # Para evitar borrar instrucciones, mostramos la nota original arriba como info
-                # y dejamos el campo editable pre-llenado con lo mismo.
-                
-                # 3. Inputs de Edición (Kg y Notas)
+                if link: st.link_button("📺 Ver Video", link, use_container_width=True)
                 c_kg, c_notas = st.columns([1, 2])
-                
                 val_kg = str(row.get('Kg', ''))
                 if val_kg == "nan": val_kg = ""
-                
                 val_notas = str(row.get('Notas', ''))
                 if val_notas == "nan": val_notas = ""
-
-                with c_kg:
-                    # Usamos keys únicos basados en el índice del dataframe original
-                    st.text_input("Kg Realizados", value=val_kg, key=f"kg_{idx}")
-                
-                with c_notas:
-                    st.text_area("Notas / Instrucciones", value=val_notas, key=f"notas_{idx}", height=68)
+                with c_kg: st.text_input("Kg Realizados", value=val_kg, key=f"kg_{idx}")
+                with c_notas: st.text_area("Notas / Instrucciones", value=val_notas, key=f"notas_{idx}", height=68)
 
 # --- 6. GESTIÓN DE LOGIN ---
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
@@ -520,12 +499,33 @@ else:
             us = obtener_todos_usuarios()
             als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
             alu_s = st.selectbox("VER DATOS DE:", als, key="stats_sel")
+            
             c_cal, c_hist = st.columns([1, 2])
             with c_cal:
                 st.markdown("### 📅 Asistencia")
-                df_s = leer_sesiones_alumno(alu_s)
-                now = datetime.now()
-                render_calendar(now.year, now.month, df_s)
+                dfs = leer_sesiones_alumno(alu_s)
+                
+                # --- NUEVO: SELECTOR DE FECHA ADMIN ---
+                MESES_LIST = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+                c_sel_m, c_sel_y = st.columns([2, 1])
+                mes_actual_idx = datetime.now().month
+                sel_mes_nom = c_sel_m.selectbox("Mes", MESES_LIST[1:], index=mes_actual_idx-1, key="admin_month")
+                sel_anio = c_sel_y.number_input("Año", value=datetime.now().year, key="admin_year")
+                sel_mes_idx = MESES_LIST.index(sel_mes_nom)
+
+                # --- NUEVO: METRICAS EN ADMIN ---
+                count_month = 0; count_year = 0
+                if not dfs.empty:
+                     count_month = dfs[(dfs["Fecha"].dt.year == sel_anio) & (dfs["Fecha"].dt.month == sel_mes_idx)]["Fecha"].nunique()
+                     count_year = dfs[dfs["Fecha"].dt.year == sel_anio]["Fecha"].nunique()
+                
+                # Mostramos métricas
+                km1, km2 = st.columns(2)
+                km1.metric(f"Mes", count_month)
+                km2.metric(f"Año", count_year)
+
+                render_calendar(int(sel_anio), sel_mes_idx, dfs)
+
             with c_hist:
                 st.markdown("### 📈 Historial")
                 df_r = leer_registros_alumno(alu_s)
@@ -565,14 +565,18 @@ else:
                 
                 r_hoy = rut[rut["Dia"] == d_hoy]
                 
-                # --- NUEVA VISTA: TARJETAS DESPLEGABLES ---
+                notas_importantes = []
+                for idx, row in r_hoy.iterrows():
+                    if str(row.get('Notas','')).strip() != "":
+                        notas_importantes.append(f"**{row['Ejercicio']}**: {row['Notas']}")
                 
-                # Separamos por secciones para mantener orden
+                if notas_importantes:
+                    st.info("📝 **NOTAS:**\n\n" + "\n".join([f"- {n}" for n in notas_importantes]))
+
                 df_sec_c = r_hoy[r_hoy["Seccion"] == "Calentamiento"]
                 df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"]
                 df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
 
-                # Renderizamos bloques
                 renderizar_bloque_seccion("🔥 Calentamiento", df_sec_c)
                 renderizar_bloque_seccion("🏋️‍♂️ Fuerza", df_sec_f)
                 renderizar_bloque_seccion("🏃‍♂️ Cardio", df_sec_ca)
@@ -585,22 +589,23 @@ else:
                     st.rerun()
 
                 st.markdown("---")
-                st.subheader("📝 Bitácora (Series Efectivas)")
-                with st.form("registro_rapido"):
-                    ejercicios_fuerza = r_hoy[r_hoy["Seccion"] == "Fuerza"]["Ejercicio"].unique()
-                    if len(ejercicios_fuerza) == 0:
-                        ej_sel = st.text_input("Ejercicio")
-                    else:
-                        c_ej, c_kg = st.columns([2, 1])
-                        ej_sel = c_ej.selectbox("Ejercicio", ejercicios_fuerza)
-                        kg_in = c_kg.text_input("Kilos", placeholder="Ej: 50")
-                    c_reps, c_rpe = st.columns(2)
-                    reps_in = c_reps.text_input("Reps", placeholder="Ej: 10")
-                    rpe_in = c_rpe.slider("RPE", 1, 10, 7)
-                    notas_in = st.text_area("Notas extra", height=80)
-                    if st.form_submit_button("GUARDAR EN HISTORIAL", use_container_width=True):
-                        guardar_registro(alias, ej_sel, kg_in, reps_in, rpe_in, notas_in)
-                        st.cache_data.clear(); st.success("Guardado!"); time.sleep(1)
+                # --- NUEVO: BITACORA DESPLEGABLE ---
+                with st.expander("📝 Bitácora (Series Efectivas)", expanded=False):
+                    with st.form("registro_rapido"):
+                        ejercicios_fuerza = r_hoy[r_hoy["Seccion"] == "Fuerza"]["Ejercicio"].unique()
+                        if len(ejercicios_fuerza) == 0:
+                            ej_sel = st.text_input("Ejercicio")
+                        else:
+                            c_ej, c_kg = st.columns([2, 1])
+                            ej_sel = c_ej.selectbox("Ejercicio", ejercicios_fuerza)
+                            kg_in = c_kg.text_input("Kilos", placeholder="Ej: 50")
+                        c_reps, c_rpe = st.columns(2)
+                        reps_in = c_reps.text_input("Reps", placeholder="Ej: 10")
+                        rpe_in = c_rpe.slider("RPE", 1, 10, 7)
+                        notas_in = st.text_area("Notas extra", height=80)
+                        if st.form_submit_button("GUARDAR EN HISTORIAL", use_container_width=True):
+                            guardar_registro(alias, ej_sel, kg_in, reps_in, rpe_in, notas_in)
+                            st.cache_data.clear(); st.success("Guardado!"); time.sleep(1)
 
                 c_ok, c_fail = st.columns(2)
                 if c_ok.button("✅ TERMINÉ POR HOY", use_container_width=True):
@@ -618,7 +623,6 @@ else:
             mes_actual_idx = datetime.now().month
             sel_mes_nom = c_sel_m.selectbox("Mes", MESES_LIST[1:], index=mes_actual_idx-1)
             sel_anio = c_sel_y.number_input("Año", value=datetime.now().year)
-            
             sel_mes_idx = MESES_LIST.index(sel_mes_nom)
             
             c_kpi1, c_kpi2 = st.columns(2)
@@ -630,37 +634,40 @@ else:
             c_kpi2.metric(f"Total {sel_anio}", count_year)
             render_calendar(int(sel_anio), sel_mes_idx, dfs)
             
+            # --- NUEVO: REGISTRAR PASADO ---
+            with st.expander("🗓️ ¿Olvidaste dar el presente?"):
+                st.caption("Registra un entrenamiento que hiciste antes y olvidaste marcar.")
+                col_d_pas, col_b_pas = st.columns([2,1])
+                fecha_pasada = col_d_pas.date_input("Fecha del entreno", value=datetime.now().date() - timedelta(days=1), max_value=datetime.now().date())
+                if col_b_pas.button("Marcar Completado", use_container_width=True):
+                    guardar_estado_sesion(alias, "Completado", fecha_pasada)
+                    st.success(f"Entreno del {fecha_pasada.strftime('%d/%m')} guardado.")
+                    st.cache_data.clear(); time.sleep(1); st.rerun()
+
             st.markdown("---")
             st.markdown("### 📈 Mi Progreso")
-            modo_edicion = st.radio("Modo de Edición:", ["📝 Móvil (Fácil)", "📊 PC (Tabla)"], horizontal=True)
+            
+            # --- MODIFICADO: SOLO MODO MÓVIL (SIMPLE) ---
             df_r = leer_registros_alumno(alias)
             if not df_r.empty:
-                if "Móvil" in modo_edicion:
-                    with st.expander("🛠️ Corregir Últimos Registros", expanded=False):
-                        df_r_sorted = df_r.sort_values("Fecha", ascending=False).head(30)
-                        if not df_r_sorted.empty:
-                            df_r_sorted["Display"] = df_r_sorted["Fecha"].dt.strftime("%d/%m") + " - " + df_r_sorted["Ejercicio"] + " (" + df_r_sorted["Peso"].astype(str) + "kg)"
-                            sel_reg = st.selectbox("Selecciona registro:", df_r_sorted["Display"].tolist())
-                            reg_data = df_r_sorted[df_r_sorted["Display"] == sel_reg].iloc[0]
-                            with st.form("form_edicion_movil"):
-                                st.caption(f"Editando: {sel_reg}")
-                                new_kg = st.text_input("Peso", value=str(reg_data["Peso"]))
-                                new_reps = st.text_input("Reps", value=str(reg_data.get("Repeticiones", reg_data.get("Reps", ""))))
-                                new_nota = st.text_area("Nota", value=str(reg_data.get("Notas", "")))
-                                if st.form_submit_button("CORREGIR", use_container_width=True):
-                                    fecha_str = reg_data["Fecha"].strftime("%Y-%m-%d")
-                                    exito = editar_un_registro_especifico(alias, fecha_str, reg_data["Ejercicio"], new_kg, new_reps, new_nota)
-                                    if exito: st.success("Listo!"); st.cache_data.clear(); st.rerun()
-                                    else: st.error("Error al guardar.")
-                else:
-                    cols_show = ["Fecha", "Ejercicio", "Peso", "Repeticiones", "Notas"]
-                    for c in cols_show: 
-                        if c not in df_r.columns: df_r[c] = ""
-                    edited_df = st.data_editor(df_r[cols_show], num_rows="dynamic", use_container_width=True, key="editor_pc")
-                    if st.button("Guardar Cambios Tabla"):
-                        actualizar_registros_masivo(alias, edited_df)
-                        st.cache_data.clear(); st.success("Guardado"); time.sleep(1); st.rerun()
-
+                with st.expander("🛠️ Corregir Últimos Registros", expanded=False):
+                    df_r_sorted = df_r.sort_values("Fecha", ascending=False).head(30)
+                    if not df_r_sorted.empty:
+                        df_r_sorted["Display"] = df_r_sorted["Fecha"].dt.strftime("%d/%m") + " - " + df_r_sorted["Ejercicio"] + " (" + df_r_sorted["Peso"].astype(str) + "kg)"
+                        sel_reg = st.selectbox("Selecciona registro:", df_r_sorted["Display"].tolist())
+                        reg_data = df_r_sorted[df_r_sorted["Display"] == sel_reg].iloc[0]
+                        with st.form("form_edicion_movil"):
+                            st.caption(f"Editando: {sel_reg}")
+                            new_kg = st.text_input("Peso", value=str(reg_data["Peso"]))
+                            new_reps = st.text_input("Reps", value=str(reg_data.get("Repeticiones", reg_data.get("Reps", ""))))
+                            new_nota = st.text_area("Nota", value=str(reg_data.get("Notas", "")))
+                            if st.form_submit_button("CORREGIR", use_container_width=True):
+                                fecha_str = reg_data["Fecha"].strftime("%Y-%m-%d")
+                                exito = editar_un_registro_especifico(alias, fecha_str, reg_data["Ejercicio"], new_kg, new_reps, new_nota)
+                                if exito: st.success("Listo!"); st.cache_data.clear(); st.rerun()
+                                else: st.error("Error al guardar.")
+                
+                # GRÁFICO (SIN CAMBIOS)
                 if "Peso_Grafico" in df_r.columns:
                      st.markdown("<br>", unsafe_allow_html=True)
                      lista_ej = df_r["Ejercicio"].unique()
