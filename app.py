@@ -212,33 +212,17 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     ws.clear()
     ws.update([cols] + df_final[cols].values.tolist())
 
-def guardar_notas_alumno(alumno, dia, df_c_edit, df_f_edit, df_ca_edit, rut_original):
-    rut_hoy = rut_original[rut_original["Dia"] == dia].copy()
-    def actualizar_seccion(df_edit, seccion):
-        if df_edit.empty: return
-        subset = rut_hoy[rut_hoy["Seccion"] == seccion]
-        for idx, row in df_edit.iterrows():
-            ej = row["Ejercicio"]
-            mask = (rut_hoy["Seccion"] == seccion) & (rut_hoy["Ejercicio"] == ej)
-            if mask.any():
-                rut_hoy.loc[mask, "Notas"] = row.get("Notas", "")
-                if "Kg" in row: rut_hoy.loc[mask, "Kg"] = str(row.get("Kg", ""))
-    actualizar_seccion(df_c_edit, "Calentamiento")
-    actualizar_seccion(df_f_edit, "Fuerza")
-    actualizar_seccion(df_ca_edit, "Cardio")
-    df_c_final = rut_hoy[rut_hoy["Seccion"] == "Calentamiento"]
-    df_f_final = rut_hoy[rut_hoy["Seccion"] == "Fuerza"]
-    df_ca_final = rut_hoy[rut_hoy["Seccion"] == "Cardio"]
-    guardar_rutina_actualizada(alumno, dia, df_c_final, df_f_final, df_ca_final)
-
 def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
     rows_c = []; rows_f = []; rows_ca = []
     for idx, row in rut_hoy.iterrows():
         seccion = row["Seccion"]
         key_kg = f"kg_{idx}"
         key_notas = f"notas_{idx}"
+        
+        # PRIORIDAD: Si está en session_state, es el dato nuevo. Si no, usa el viejo.
         nuevo_kg = str(session_state.get(key_kg, row.get("Kg", "")))
         nueva_nota = str(session_state.get(key_notas, row.get("Notas", "")))
+        
         new_row = row.copy()
         new_row["Kg"] = nuevo_kg
         new_row["Notas"] = nueva_nota
@@ -293,7 +277,6 @@ def actualizar_registros_masivo(usuario, df_editado):
     ws.clear()
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
 
-# --- MODIFICADO: Ahora acepta fecha opcional para registros pasados ---
 def guardar_estado_sesion(usuario, estado, fecha_dt=None):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Sesiones")
@@ -375,6 +358,7 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
+# --- CORRECCION CRITICA DE PERSISTENCIA ---
 def renderizar_bloque_seccion(titulo, df_seccion):
     if not df_seccion.empty:
         st.markdown(f"#### {titulo}")
@@ -389,12 +373,28 @@ def renderizar_bloque_seccion(titulo, df_seccion):
                 link = str(row.get('Link', '')).strip()
                 if link: st.link_button("📺 Ver Video", link, use_container_width=True)
                 c_kg, c_notas = st.columns([1, 2])
-                val_kg = str(row.get('Kg', ''))
-                if val_kg == "nan": val_kg = ""
-                val_notas = str(row.get('Notas', ''))
-                if val_notas == "nan": val_notas = ""
-                with c_kg: st.text_input("Kg Realizados", value=val_kg, key=f"kg_{idx}")
-                with c_notas: st.text_area("Notas / Instrucciones", value=val_notas, key=f"notas_{idx}", height=68)
+                
+                # Definimos Keys
+                k_kg = f"kg_{idx}"
+                k_notas = f"notas_{idx}"
+
+                # LÓGICA DE PERSISTENCIA:
+                # Si el usuario editó y la página recargó, el valor está en session_state.
+                # Priorizamos session_state sobre la base de datos para que no se borre al guardar.
+                if k_kg in st.session_state:
+                    val_kg = st.session_state[k_kg]
+                else:
+                    val_kg = str(row.get('Kg', ''))
+                    if val_kg == "nan": val_kg = ""
+                
+                if k_notas in st.session_state:
+                    val_notas = st.session_state[k_notas]
+                else:
+                    val_notas = str(row.get('Notas', ''))
+                    if val_notas == "nan": val_notas = ""
+
+                with c_kg: st.text_input("Kg Realizados", value=val_kg, key=k_kg)
+                with c_notas: st.text_area("Notas / Instrucciones", value=val_notas, key=k_notas, height=68)
 
 # --- 6. GESTIÓN DE LOGIN ---
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
@@ -505,7 +505,6 @@ else:
                 st.markdown("### 📅 Asistencia")
                 dfs = leer_sesiones_alumno(alu_s)
                 
-                # --- NUEVO: SELECTOR DE FECHA ADMIN ---
                 MESES_LIST = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
                 c_sel_m, c_sel_y = st.columns([2, 1])
                 mes_actual_idx = datetime.now().month
@@ -513,13 +512,11 @@ else:
                 sel_anio = c_sel_y.number_input("Año", value=datetime.now().year, key="admin_year")
                 sel_mes_idx = MESES_LIST.index(sel_mes_nom)
 
-                # --- NUEVO: METRICAS EN ADMIN ---
                 count_month = 0; count_year = 0
                 if not dfs.empty:
                      count_month = dfs[(dfs["Fecha"].dt.year == sel_anio) & (dfs["Fecha"].dt.month == sel_mes_idx)]["Fecha"].nunique()
                      count_year = dfs[dfs["Fecha"].dt.year == sel_anio]["Fecha"].nunique()
                 
-                # Mostramos métricas
                 km1, km2 = st.columns(2)
                 km1.metric(f"Mes", count_month)
                 km2.metric(f"Año", count_year)
@@ -589,7 +586,6 @@ else:
                     st.rerun()
 
                 st.markdown("---")
-                # --- NUEVO: BITACORA DESPLEGABLE ---
                 with st.expander("📝 Bitácora (Series Efectivas)", expanded=False):
                     with st.form("registro_rapido"):
                         ejercicios_fuerza = r_hoy[r_hoy["Seccion"] == "Fuerza"]["Ejercicio"].unique()
@@ -634,7 +630,6 @@ else:
             c_kpi2.metric(f"Total {sel_anio}", count_year)
             render_calendar(int(sel_anio), sel_mes_idx, dfs)
             
-            # --- NUEVO: REGISTRAR PASADO ---
             with st.expander("🗓️ ¿Olvidaste dar el presente?"):
                 st.caption("Registra un entrenamiento que hiciste antes y olvidaste marcar.")
                 col_d_pas, col_b_pas = st.columns([2,1])
@@ -647,7 +642,6 @@ else:
             st.markdown("---")
             st.markdown("### 📈 Mi Progreso")
             
-            # --- MODIFICADO: SOLO MODO MÓVIL (SIMPLE) ---
             df_r = leer_registros_alumno(alias)
             if not df_r.empty:
                 with st.expander("🛠️ Corregir Últimos Registros", expanded=False):
@@ -667,7 +661,6 @@ else:
                                 if exito: st.success("Listo!"); st.cache_data.clear(); st.rerun()
                                 else: st.error("Error al guardar.")
                 
-                # GRÁFICO (SIN CAMBIOS)
                 if "Peso_Grafico" in df_r.columns:
                      st.markdown("<br>", unsafe_allow_html=True)
                      lista_ej = df_r["Ejercicio"].unique()
