@@ -212,6 +212,25 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     ws.clear()
     ws.update([cols] + df_final[cols].values.tolist())
 
+def guardar_notas_alumno(alumno, dia, df_c_edit, df_f_edit, df_ca_edit, rut_original):
+    rut_hoy = rut_original[rut_original["Dia"] == dia].copy()
+    def actualizar_seccion(df_edit, seccion):
+        if df_edit.empty: return
+        subset = rut_hoy[rut_hoy["Seccion"] == seccion]
+        for idx, row in df_edit.iterrows():
+            ej = row["Ejercicio"]
+            mask = (rut_hoy["Seccion"] == seccion) & (rut_hoy["Ejercicio"] == ej)
+            if mask.any():
+                rut_hoy.loc[mask, "Notas"] = row.get("Notas", "")
+                if "Kg" in row: rut_hoy.loc[mask, "Kg"] = str(row.get("Kg", ""))
+    actualizar_seccion(df_c_edit, "Calentamiento")
+    actualizar_seccion(df_f_edit, "Fuerza")
+    actualizar_seccion(df_ca_edit, "Cardio")
+    df_c_final = rut_hoy[rut_hoy["Seccion"] == "Calentamiento"]
+    df_f_final = rut_hoy[rut_hoy["Seccion"] == "Fuerza"]
+    df_ca_final = rut_hoy[rut_hoy["Seccion"] == "Cardio"]
+    guardar_rutina_actualizada(alumno, dia, df_c_final, df_f_final, df_ca_final)
+
 def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
     rows_c = []; rows_f = []; rows_ca = []
     for idx, row in rut_hoy.iterrows():
@@ -358,7 +377,6 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- CORRECCION CRITICA DE PERSISTENCIA ---
 def renderizar_bloque_seccion(titulo, df_seccion):
     if not df_seccion.empty:
         st.markdown(f"#### {titulo}")
@@ -379,8 +397,6 @@ def renderizar_bloque_seccion(titulo, df_seccion):
                 k_notas = f"notas_{idx}"
 
                 # LÓGICA DE PERSISTENCIA:
-                # Si el usuario editó y la página recargó, el valor está en session_state.
-                # Priorizamos session_state sobre la base de datos para que no se borre al guardar.
                 if k_kg in st.session_state:
                     val_kg = st.session_state[k_kg]
                 else:
@@ -579,8 +595,12 @@ else:
                 renderizar_bloque_seccion("🏃‍♂️ Cardio", df_sec_ca)
 
                 st.markdown("<br>", unsafe_allow_html=True)
+                
+                # --- AQUÍ ESTÁ LA CORRECCIÓN CRÍTICA ---
                 if st.button("💾 GUARDAR CAMBIOS EN LA RUTINA", type="primary", use_container_width=True):
                     guardar_desde_tarjetas(alias, d_hoy, r_hoy, st.session_state)
+                    # BORRAMOS CACHÉ INMEDIATAMENTE PARA QUE AL RECARGAR APAREZCAN LOS DATOS NUEVOS
+                    st.cache_data.clear()
                     st.toast("✅ Notas y Kilos guardados!")
                     time.sleep(1)
                     st.rerun()
