@@ -6,11 +6,12 @@ from google.oauth2.service_account import Credentials
 import os
 from io import BytesIO
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import calendar
 import time
 import re
+import itertools
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -87,6 +88,10 @@ def conectar_google_sheet():
         creds_dict = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return gspread.authorize(creds).open("El Estudio DB")
+
+# --- FUNCION DE ORDENAMIENTO NATURAL (Crucial para Word y Selectores) ---
+def natural_sort_key(s):
+    return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
 
 # --- 4. FUNCIONES DE LECTURA ---
 @st.cache_data(ttl=600)
@@ -219,7 +224,6 @@ def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
         key_kg = f"kg_{idx}"
         key_notas = f"notas_{idx}"
         
-        # PRIORIDAD: Si está en session_state, es el dato nuevo. Si no, usa el viejo.
         nuevo_kg = str(session_state.get(key_kg, row.get("Kg", "")))
         nueva_nota = str(session_state.get(key_notas, row.get("Notas", "")))
         
@@ -299,13 +303,24 @@ def generar_word(alumno, df_rutina):
     p_titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y')}")
     doc.add_paragraph("-" * 50)
-    for dia in df_rutina["Dia"].unique():
+    
+    # ORDENAR DIAS
+    dias_ordenados = sorted(df_rutina["Dia"].unique(), key=natural_sort_key)
+    
+    for dia in dias_ordenados:
         doc.add_heading(dia, level=1)
         rutina_dia = df_rutina[df_rutina["Dia"] == dia]
+        
+        # Mapeo de emojis para word
+        emoji_map = {"Calentamiento": "🔥", "Fuerza": "🏋️‍♂️", "Cardio": "🏃‍♂️"}
+        
         for sec in ["Calentamiento", "Fuerza", "Cardio"]:
             df_sec = rutina_dia[rutina_dia["Seccion"] == sec]
             if not df_sec.empty:
-                doc.add_heading(sec, level=2)
+                # Titulo con emoji
+                titulo_sec = f"{emoji_map.get(sec, '')} {sec}"
+                doc.add_heading(titulo_sec, level=2)
+                
                 cols_count = 5 if sec == "Fuerza" else 4
                 table = doc.add_table(rows=1, cols=cols_count)
                 table.style = 'Table Grid'
@@ -358,40 +373,70 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
+# --- NUEVA FUNCION DE RENDERIZADO CON AGRUPACION DE BLOQUES ---
 def renderizar_bloque_seccion(titulo, df_seccion):
-    if not df_seccion.empty:
-        st.markdown(f"#### {titulo}")
-        for idx, row in df_seccion.iterrows():
-            ej_nombre = row['Ejercicio']
-            series_reps = f"{row.get('Series','?')} x {row.get('Reps','?')}"
-            orden_prefix = ""
-            if "Orden" in row and str(row["Orden"]).strip() not in ["", "-"]:
-                orden_prefix = f"**{row['Orden']}** | "
-            titulo_card = f"{orden_prefix}{ej_nombre} ({series_reps})"
-            with st.expander(titulo_card):
-                link = str(row.get('Link', '')).strip()
-                if link: st.link_button("📺 Ver Video", link, use_container_width=True)
-                c_kg, c_notas = st.columns([1, 2])
-                
-                # Definimos Keys
-                k_kg = f"kg_{idx}"
-                k_notas = f"notas_{idx}"
+    if df_seccion.empty: return
 
-                # LÓGICA DE PERSISTENCIA:
-                if k_kg in st.session_state:
-                    val_kg = st.session_state[k_kg]
-                else:
-                    val_kg = str(row.get('Kg', ''))
-                    if val_kg == "nan": val_kg = ""
-                
-                if k_notas in st.session_state:
-                    val_notas = st.session_state[k_notas]
-                else:
-                    val_notas = str(row.get('Notas', ''))
-                    if val_notas == "nan": val_notas = ""
+    st.markdown(f"#### {titulo}")
+    
+    # Lógica de agrupamiento para contornos (A, B, C...)
+    # Creamos una columna auxiliar 'Bloque' con la primera letra si es A-Z
+    def obtener_bloque(orden):
+        o = str(orden).strip().upper()
+        if len(o) > 0 and o[0].isalpha() and o != "-":
+            return o[0] # Retorna 'A', 'B', etc.
+        return "SIN_BLOQUE"
 
-                with c_kg: st.text_input("Kg Realizados", value=val_kg, key=k_kg)
-                with c_notas: st.text_area("Notas / Instrucciones", value=val_notas, key=k_notas, height=68)
+    # Preparamos los datos con el índice original preservado
+    datos_con_indice = []
+    for idx, row in df_seccion.iterrows():
+        datos_con_indice.append((idx, row, obtener_bloque(row.get("Orden", ""))))
+    
+    # Iteramos agrupando por Bloque
+    for bloque, grupo in itertools.groupby(datos_con_indice, key=lambda x: x[2]):
+        items = list(grupo) # Lista de tuplas (idx, row, bloque)
+        
+        # Si es un bloque con letra (A, B...) usamos un contenedor con borde
+        if bloque != "SIN_BLOQUE":
+            with st.container(border=True):
+                # Renderizamos los items del bloque
+                for idx, row, _ in items:
+                    render_tarjeta_individual(idx, row)
+        else:
+            # Si no es bloque, renderizamos suelto
+            for idx, row, _ in items:
+                render_tarjeta_individual(idx, row)
+
+def render_tarjeta_individual(idx, row):
+    ej_nombre = row['Ejercicio']
+    series_reps = f"{row.get('Series','?')} x {row.get('Reps','?')}"
+    orden_prefix = ""
+    if "Orden" in row and str(row["Orden"]).strip() not in ["", "-"]:
+        orden_prefix = f"**{row['Orden']}** | "
+    
+    titulo_card = f"{orden_prefix}{ej_nombre} ({series_reps})"
+    
+    with st.expander(titulo_card):
+        link = str(row.get('Link', '')).strip()
+        if link: st.link_button("📺 Ver Video", link, use_container_width=True)
+        c_kg, c_notas = st.columns([1, 2])
+        
+        k_kg = f"kg_{idx}"
+        k_notas = f"notas_{idx}"
+
+        if k_kg in st.session_state: val_kg = st.session_state[k_kg]
+        else:
+            val_kg = str(row.get('Kg', ''))
+            if val_kg == "nan": val_kg = ""
+        
+        if k_notas in st.session_state: val_notas = st.session_state[k_notas]
+        else:
+            val_notas = str(row.get('Notas', ''))
+            if val_notas == "nan": val_notas = ""
+
+        with c_kg: st.text_input("Kg Realizados", value=val_kg, key=k_kg)
+        with c_notas: st.text_area("Notas / Instrucciones", value=val_notas, key=k_notas, height=68)
+
 
 # --- 6. GESTIÓN DE LOGIN ---
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
@@ -551,14 +596,10 @@ else:
                 with st.container(border=True):
                     col_d, col_w = st.columns([3, 1])
                     with col_d:
-                        # --- MODIFICADO: ORDENAMIENTO DE DIAS ---
-                        # Función auxiliar para ordenar "Día 1" vs "Día 10" correctamente
                         def natural_sort_key(s):
-                            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+                            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
                         
                         dias_disponibles = sorted(rut["Dia"].unique(), key=natural_sort_key)
-                        
-                        # --- MODIFICADO: SELECTOR CON MEMORIA (KEY) ---
                         d_hoy = st.selectbox("Selecciona Día", dias_disponibles, key="selector_dia_alumno")
 
                     with col_w:
@@ -587,7 +628,6 @@ else:
                 
                 if st.button("💾 GUARDAR CAMBIOS EN LA RUTINA", type="primary", use_container_width=True):
                     guardar_desde_tarjetas(alias, d_hoy, r_hoy, st.session_state)
-                    # BORRAMOS CACHÉ INMEDIATAMENTE PARA QUE AL RECARGAR APAREZCAN LOS DATOS NUEVOS
                     st.cache_data.clear()
                     st.toast("✅ Notas y Kilos guardados!")
                     time.sleep(1)
@@ -677,7 +717,8 @@ else:
                          df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=True)
                          df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
                          st.line_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
-                         st.caption("📈 Fuerza Estimada (1RM)")
+                         st.caption("ℹ️ **¿Qué es el 1RM?** Es tu Repetición Máxima Estimada. Indica el peso máximo teórico que podrías levantar a 1 sola repetición, calculado según tu peso y repeticiones actuales. ¡Si la curva sube, te estás volviendo más fuerte!")
+                         
                          st.markdown("#### 🗂️ Historial")
                          df_feed = df_plt.sort_values("Fecha", ascending=False)
                          for idx, row in df_feed.iterrows():
@@ -687,6 +728,7 @@ else:
                                  with c2:
                                      reps_txt = str(row.get('Repeticiones', row.get('Reps', '')))
                                      peso_txt = str(row.get('Peso', ''))
-                                     st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}**")
+                                     rpe_txt = str(row.get('Rpe', '-'))
+                                     st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}** | ⚡ **RPE: {rpe_txt}**")
                                      if str(row.get('Notas','')).strip(): st.caption(f"📝 {row['Notas']}")
             else: st.info("Aún no has registrado nada.")
