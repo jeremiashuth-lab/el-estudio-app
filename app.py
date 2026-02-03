@@ -73,13 +73,28 @@ def cargar_estilos():
         
         div[data-testid="stVerticalBlock"] { gap: 1rem; }
 
-        /* --- OCULTAR ELEMENTOS DE STREAMLIT (MANAGE APP) --- */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        header {visibility: hidden;}
-        .stAppDeployButton {display: none;}
-        [data-testid="stToolbar"] {visibility: hidden;}
-        [data-testid="stHeader"] {visibility: hidden;}
+        /* --- MODO KIOSCO / OCULTAR INTERFAZ --- */
+        #MainMenu {visibility: hidden !important;}
+        footer {visibility: hidden !important; display: none !important;}
+        header {visibility: hidden !important;}
+        
+        /* Ocultar Barra de Herramientas (Hamburguesa, Deploy, etc) */
+        [data-testid="stToolbar"] {
+            visibility: hidden !important;
+            display: none !important;
+        }
+        
+        /* Ocultar Decoración del Header pero mantener espacio si es necesario */
+        [data-testid="stHeader"] {
+            visibility: hidden !important;
+            background: transparent !important;
+        }
+        
+        /* Ocultar Botones de Deploy Específicos */
+        .stAppDeployButton {
+            display: none !important;
+            visibility: hidden !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -562,13 +577,25 @@ else:
                     if len(lista_ejercicios) > 0:
                         ej_v = st.selectbox("Gráfico de:", lista_ejercicios)
                         df_plt = df_r[df_r["Ejercicio"] == ej_v].sort_values("Fecha", ascending=True)
-                        # --- MEJORA: DATO EXPLICITO ---
                         if not df_plt.empty:
                             df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
                             ultimo_1rm = df_plt["1RM"].iloc[-1]
                             st.metric(f"🔥 1RM Actual Estimado", f"{ultimo_1rm:.1f} kg")
                             st.line_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
-                            st.info("ℹ️ **¿Qué es el 1RM?** Es tu Repetición Máxima Estimada. Indica el peso máximo teórico que podrías levantar a 1 sola repetición.")
+                            st.info("ℹ️ **¿Qué es el 1RM?** Es tu Repetición Máxima Estimada. Indica el peso máximo teórico que podrías levantar a 1 sola repetición. ¡Si la curva sube, te estás volviendo más fuerte!")
+                            
+                            st.markdown("#### 🗂️ Historial")
+                            df_feed = df_plt.sort_values("Fecha", ascending=False)
+                            for idx, row in df_feed.iterrows():
+                                with st.container(border=True):
+                                    c1, c2 = st.columns([1, 4])
+                                    with c1: st.write(f"**{row['Fecha'].strftime('%d/%m')}**")
+                                    with c2:
+                                        reps_txt = str(row.get('Repeticiones', row.get('Reps', '')))
+                                        peso_txt = str(row.get('Peso', ''))
+                                        rpe_txt = str(row.get('Rpe', '-'))
+                                        st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}** | ⚡ **RPE: {rpe_txt}**")
+                                        if str(row.get('Notas','')).strip(): st.caption(f"📝 {row['Notas']}")
 
     else:
         # VISTA ALUMNO
@@ -717,4 +744,6 @@ else:
                                         rpe_txt = str(row.get('Rpe', '-'))
                                         st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}** | ⚡ **RPE: {rpe_txt}**")
                                         if str(row.get('Notas','')).strip(): st.caption(f"📝 {row['Notas']}")
-            else: st.info("Aún no has registrado nada.")
+            else: 
+                # --- AQUÍ ESTABA EL ERROR DE INDENTACIÓN, YA CORREGIDO ---
+                st.info("Aún no has registrado nada.")
