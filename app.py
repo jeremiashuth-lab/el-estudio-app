@@ -72,6 +72,14 @@ def cargar_estilos():
         .day-incomplete { background-color: #F39C12 !important; color: #000 !important; }
         
         div[data-testid="stVerticalBlock"] { gap: 1rem; }
+
+        /* --- OCULTAR ELEMENTOS DE STREAMLIT (MANAGE APP) --- */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        .stAppDeployButton {display: none;}
+        [data-testid="stToolbar"] {visibility: hidden;}
+        [data-testid="stHeader"] {visibility: hidden;}
         </style>
     """, unsafe_allow_html=True)
 
@@ -89,7 +97,6 @@ def conectar_google_sheet():
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return gspread.authorize(creds).open("El Estudio DB")
 
-# --- FUNCION DE ORDENAMIENTO NATURAL (Crucial para Word y Selectores) ---
 def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
 
@@ -303,24 +310,16 @@ def generar_word(alumno, df_rutina):
     p_titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y')}")
     doc.add_paragraph("-" * 50)
-    
-    # ORDENAR DIAS
     dias_ordenados = sorted(df_rutina["Dia"].unique(), key=natural_sort_key)
-    
     for dia in dias_ordenados:
         doc.add_heading(dia, level=1)
         rutina_dia = df_rutina[df_rutina["Dia"] == dia]
-        
-        # Mapeo de emojis para word
         emoji_map = {"Calentamiento": "🔥", "Fuerza": "🏋️‍♂️", "Cardio": "🏃‍♂️"}
-        
         for sec in ["Calentamiento", "Fuerza", "Cardio"]:
             df_sec = rutina_dia[rutina_dia["Seccion"] == sec]
             if not df_sec.empty:
-                # Titulo con emoji
                 titulo_sec = f"{emoji_map.get(sec, '')} {sec}"
                 doc.add_heading(titulo_sec, level=2)
-                
                 cols_count = 5 if sec == "Fuerza" else 4
                 table = doc.add_table(rows=1, cols=cols_count)
                 table.style = 'Table Grid'
@@ -373,37 +372,24 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- NUEVA FUNCION DE RENDERIZADO CON AGRUPACION DE BLOQUES ---
 def renderizar_bloque_seccion(titulo, df_seccion):
     if df_seccion.empty: return
-
     st.markdown(f"#### {titulo}")
-    
-    # Lógica de agrupamiento para contornos (A, B, C...)
-    # Creamos una columna auxiliar 'Bloque' con la primera letra si es A-Z
     def obtener_bloque(orden):
         o = str(orden).strip().upper()
         if len(o) > 0 and o[0].isalpha() and o != "-":
-            return o[0] # Retorna 'A', 'B', etc.
+            return o[0] 
         return "SIN_BLOQUE"
-
-    # Preparamos los datos con el índice original preservado
     datos_con_indice = []
     for idx, row in df_seccion.iterrows():
         datos_con_indice.append((idx, row, obtener_bloque(row.get("Orden", ""))))
-    
-    # Iteramos agrupando por Bloque
     for bloque, grupo in itertools.groupby(datos_con_indice, key=lambda x: x[2]):
-        items = list(grupo) # Lista de tuplas (idx, row, bloque)
-        
-        # Si es un bloque con letra (A, B...) usamos un contenedor con borde
+        items = list(grupo)
         if bloque != "SIN_BLOQUE":
             with st.container(border=True):
-                # Renderizamos los items del bloque
                 for idx, row, _ in items:
                     render_tarjeta_individual(idx, row)
         else:
-            # Si no es bloque, renderizamos suelto
             for idx, row, _ in items:
                 render_tarjeta_individual(idx, row)
 
@@ -413,30 +399,23 @@ def render_tarjeta_individual(idx, row):
     orden_prefix = ""
     if "Orden" in row and str(row["Orden"]).strip() not in ["", "-"]:
         orden_prefix = f"**{row['Orden']}** | "
-    
     titulo_card = f"{orden_prefix}{ej_nombre} ({series_reps})"
-    
     with st.expander(titulo_card):
         link = str(row.get('Link', '')).strip()
         if link: st.link_button("📺 Ver Video", link, use_container_width=True)
         c_kg, c_notas = st.columns([1, 2])
-        
         k_kg = f"kg_{idx}"
         k_notas = f"notas_{idx}"
-
         if k_kg in st.session_state: val_kg = st.session_state[k_kg]
         else:
             val_kg = str(row.get('Kg', ''))
             if val_kg == "nan": val_kg = ""
-        
         if k_notas in st.session_state: val_notas = st.session_state[k_notas]
         else:
             val_notas = str(row.get('Notas', ''))
             if val_notas == "nan": val_notas = ""
-
         with c_kg: st.text_input("Kg Realizados", value=val_kg, key=k_kg)
         with c_notas: st.text_area("Notas / Instrucciones", value=val_notas, key=k_notas, height=68)
-
 
 # --- 6. GESTIÓN DE LOGIN ---
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
@@ -583,7 +562,13 @@ else:
                     if len(lista_ejercicios) > 0:
                         ej_v = st.selectbox("Gráfico de:", lista_ejercicios)
                         df_plt = df_r[df_r["Ejercicio"] == ej_v].sort_values("Fecha", ascending=True)
-                        st.line_chart(df_plt.set_index("Fecha")["Peso_Grafico"], color="#E63946")
+                        # --- MEJORA: DATO EXPLICITO ---
+                        if not df_plt.empty:
+                            df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
+                            ultimo_1rm = df_plt["1RM"].iloc[-1]
+                            st.metric(f"🔥 1RM Actual Estimado", f"{ultimo_1rm:.1f} kg")
+                            st.line_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
+                            st.info("ℹ️ **¿Qué es el 1RM?** Es tu Repetición Máxima Estimada. Indica el peso máximo teórico que podrías levantar a 1 sola repetición.")
 
     else:
         # VISTA ALUMNO
@@ -596,9 +581,6 @@ else:
                 with st.container(border=True):
                     col_d, col_w = st.columns([3, 1])
                     with col_d:
-                        def natural_sort_key(s):
-                            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
-                        
                         dias_disponibles = sorted(rut["Dia"].unique(), key=natural_sort_key)
                         d_hoy = st.selectbox("Selecciona Día", dias_disponibles, key="selector_dia_alumno")
 
@@ -715,20 +697,24 @@ else:
                      if len(lista_ej) > 0:
                          ej_sel = st.selectbox("Ver Gráfico de:", lista_ej)
                          df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=True)
-                         df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
-                         st.line_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
-                         st.caption("ℹ️ **¿Qué es el 1RM?** Es tu Repetición Máxima Estimada. Indica el peso máximo teórico que podrías levantar a 1 sola repetición, calculado según tu peso y repeticiones actuales. ¡Si la curva sube, te estás volviendo más fuerte!")
-                         
-                         st.markdown("#### 🗂️ Historial")
-                         df_feed = df_plt.sort_values("Fecha", ascending=False)
-                         for idx, row in df_feed.iterrows():
-                             with st.container(border=True):
-                                 c1, c2 = st.columns([1, 4])
-                                 with c1: st.write(f"**{row['Fecha'].strftime('%d/%m')}**")
-                                 with c2:
-                                     reps_txt = str(row.get('Repeticiones', row.get('Reps', '')))
-                                     peso_txt = str(row.get('Peso', ''))
-                                     rpe_txt = str(row.get('Rpe', '-'))
-                                     st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}** | ⚡ **RPE: {rpe_txt}**")
-                                     if str(row.get('Notas','')).strip(): st.caption(f"📝 {row['Notas']}")
+                         if not df_plt.empty:
+                            df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
+                            ultimo_1rm = df_plt["1RM"].iloc[-1]
+                            st.metric(f"🔥 1RM Actual Estimado", f"{ultimo_1rm:.1f} kg")
+                            st.line_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
+                            st.info("ℹ️ **¿Qué es el 1RM?** Es tu Repetición Máxima Estimada. Indica el peso máximo teórico que podrías levantar a 1 sola repetición. ¡Si la curva sube, te estás volviendo más fuerte!")
+                            
+                            st.markdown("#### 🗂️ Historial")
+                            df_feed = df_plt.sort_values("Fecha", ascending=False)
+                            for idx, row in df_feed.iterrows():
+                                with st.container(border=True):
+                                    c1, c2 = st.columns([1, 4])
+                                    with c1: st.write(f"**{row['Fecha'].strftime('%d/%m')}**")
+                                    with c2:
+                                        reps_txt = str(row.get('Repeticiones', row.get('Reps', '')))
+                                        peso_txt = str(row.get('Peso', ''))
+                                        # --- MOSTRAR RPE ---
+                                        rpe_txt = str(row.get('Rpe', '-'))
+                                        st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}** | ⚡ **RPE: {rpe_txt}**")
+                                        if str(row.get('Notas','')).strip(): st.caption(f"📝 {row['Notas']}")
             else: st.info("Aún no has registrado nada.")
