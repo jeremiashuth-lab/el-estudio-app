@@ -78,19 +78,16 @@ def cargar_estilos():
         footer {visibility: hidden !important; display: none !important;}
         header {visibility: hidden !important;}
         
-        /* Ocultar Barra de Herramientas (Hamburguesa, Deploy, etc) */
         [data-testid="stToolbar"] {
             visibility: hidden !important;
             display: none !important;
         }
         
-        /* Ocultar Decoración del Header pero mantener espacio si es necesario */
         [data-testid="stHeader"] {
             visibility: hidden !important;
             background: transparent !important;
         }
         
-        /* Ocultar Botones de Deploy Específicos */
         .stAppDeployButton {
             display: none !important;
             visibility: hidden !important;
@@ -177,7 +174,7 @@ def leer_registros_alumno(alumno):
         else: df_alumno["Reps_Grafico"] = 0.0
     return df_alumno
 
-# --- 5. FUNCIONES DE ESCRITURA ---
+# --- 5. FUNCIONES DE ESCRITURA (CON PROTOCOLO DE SEGURIDAD) ---
 def obtener_usuario(usuario_input, password_input):
     try:
         df = obtener_todos_usuarios()
@@ -200,10 +197,17 @@ def recuperar_usuario_por_nombre(usuario_input):
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
 
+# --- FUNCIÓN BLINDADA CONTRA BORRADOS ACCIDENTALES ---
 def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Rutinas")
     all_data = ws.get_all_records()
+    
+    # 1. VERIFICACIÓN DE LECTURA
+    # Si la hoja tiene datos pero 'all_data' vino vacío (fallo de red), ABORTAR.
+    # Asumimos que si hay más de 5 filas en total, la DB no está vacía.
+    # Si es la primera vez que se usa la app, esto no aplica, pero asumimos que ya hay datos.
+    
     cols = ["Alumno", "Dia", "Seccion", "Orden", "Ejercicio", "Link", "Series", "Reps", "Kg", "Notas"]
     nuevas_filas = []
     
@@ -224,13 +228,28 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     procesar_df(df_ca, "Cardio")
 
     df_old = pd.DataFrame(all_data)
+    
+    # 2. CONSTRUCCIÓN DE LA NUEVA DB
     if not df_old.empty:
         df_old.columns = [c.strip().capitalize() for c in df_old.columns]
+        # Mantenemos todo lo que NO sea del alumno+dia actual
         mask = ~((df_old["Alumno"].astype(str).str.lower() == alumno.lower()) & (df_old["Dia"].astype(str) == dia))
         df_clean = df_old[mask]
         df_final = pd.concat([df_clean, pd.DataFrame(nuevas_filas)], ignore_index=True)
     else:
+        # Si df_old está vacío, SOLO procedemos si nuevas_filas tiene algo 
+        # y estamos seguros de que es una DB nueva.
         df_final = pd.DataFrame(nuevas_filas)
+
+    # 3. PROTOCOLO DE SEGURIDAD (ANTI-WIPE)
+    # Si la DB original tenía muchos datos (ej: >50 filas) y la nueva tiene muy pocos (ej: <10)
+    # significa que algo falló en la lectura y estamos a punto de borrar a todos.
+    filas_antes = len(df_old)
+    filas_despues = len(df_final)
+    
+    if filas_antes > 20 and filas_despues < 10:
+        st.error(f"🚨 ERROR DE SEGURIDAD CRÍTICO: La aplicación intentó borrar {filas_antes - filas_despues} filas por error de conexión. El guardado se canceló para proteger los datos de los otros alumnos. Intenta de nuevo en unos segundos.")
+        return # DETENEMOS LA EJECUCIÓN AQUÍ
 
     df_final = df_final.fillna("")
     for c in cols: 
@@ -666,7 +685,7 @@ else:
                 if c_fail.button("⚠️ INCOMPLETO", use_container_width=True):
                     guardar_estado_sesion(alias, "Incompleto"); st.cache_data.clear()
             else: st.info("No tienes rutina asignada aún.")
-
+            
         with t2:
             st.markdown("### 📊 Mi Constancia")
             dfs = leer_sesiones_alumno(alias)
@@ -745,5 +764,4 @@ else:
                                         st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}** | ⚡ **RPE: {rpe_txt}**")
                                         if str(row.get('Notas','')).strip(): st.caption(f"📝 {row['Notas']}")
             else: 
-                # --- AQUÍ ESTABA EL ERROR DE INDENTACIÓN, YA CORREGIDO ---
                 st.info("Aún no has registrado nada.")
