@@ -13,6 +13,7 @@ import time
 import re
 import itertools
 import math
+import altair as alt
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -456,8 +457,9 @@ def renderizar_bloque_seccion(titulo, df_seccion):
         items = list(grupo)
         if bloque != "SIN_BLOQUE":
             with st.container(border=True):
-                # --- HACK CSS PARA ACTIVAR EL BORDE ROJO ---
-                st.markdown("<div class='red-border-trigger'></div>", unsafe_allow_html=True)
+                # --- HACK DOBLE: TEXTO VISIBLE + CLASE CSS OCULTA ---
+                # El texto garantiza que siempre se sepa que es un bloque, y la clase activa el borde si el navegador lo soporta.
+                st.markdown("<div class='red-border-trigger' style='text-align:center; color:#E63946; font-size:0.75rem; font-weight:800; margin-bottom:10px; letter-spacing:1px;'>🔴 BLOQUE EN CONJUNTO</div>", unsafe_allow_html=True)
                 for idx, row, _ in items:
                     render_tarjeta_individual(idx, row)
         else:
@@ -683,7 +685,7 @@ else:
                     st.rerun()
 
                 st.markdown("---")
-                with st.expander("📝 Bitácora (Series Efectivas)", expanded=False):
+                with st.expander("📝 Registro Rápido (Guardar serie en historial)", expanded=False):
                     with st.form("registro_rapido"):
                         ejercicios_fuerza = r_hoy[r_hoy["Seccion"] == "Fuerza"]["Ejercicio"].unique()
                         if len(ejercicios_fuerza) == 0:
@@ -750,9 +752,18 @@ else:
                     
                     if not df_plt.empty:
                         st.caption(f"Historial de Cargas: {ej_sel}")
+                        
+                        # --- GRAFICO ESTATICO (NO SE MUEVE AL SCROLLEAR) ---
                         df_chart = df_plt.copy()
                         df_chart["Reps_Label"] = df_chart["Reps_Grafico"].astype(int).astype(str) + " reps"
-                        st.bar_chart(df_chart, x="Reps_Label", y="Peso_Grafico", color="#E63946")
+                        
+                        chart = alt.Chart(df_chart).mark_bar(color="#E63946").encode(
+                            x=alt.X('Reps_Label:O', sort=None, title="Repeticiones"),
+                            y=alt.Y('Peso_Grafico:Q', title="Kilos"),
+                            tooltip=['Fecha', 'Peso_Grafico', 'Reps_Label']
+                        ).properties(height=300).interactive(False) # Interactive(False) congela el gráfico
+                        
+                        st.altair_chart(chart, use_container_width=True)
                         
                         cols_view = ["Fecha", "Peso", "Repeticiones", "Rpe", "Notas"]
                         for c in cols_view:
@@ -788,41 +799,43 @@ else:
                 rm_calculo = ultimo_1rm_val
             
             if rm_calculo > 0:
-                st.caption(f"TABLA DE FUERZA (Base: {int(rm_calculo)}kg)")
-                cols_grid = st.columns(4)
-                for i in range(1, 13):
-                    peso_rm_i = rm_calculo * (1.0278 - 0.0278 * i)
-                    if i == 1: peso_rm_i = rm_calculo
-                    
-                    with cols_grid[(i-1)%4]:
-                        st.markdown(f"""
-                        <div class="rm-card">
-                            <div class="rm-title">{i}RM</div>
-                            <div class="rm-value">{int(peso_rm_i)}</div>
-                            <div class="rm-unit">kg</div>
-                        </div>
-                        <div style="margin-bottom:10px;"></div>
-                        """, unsafe_allow_html=True)
+                # --- TABLAS DENTRO DEL DESPLEGABLE ---
+                with st.expander("📊 Ver Tablas de RM y % de Fuerza", expanded=False):
+                    st.caption(f"TABLA DE FUERZA (Base: {int(rm_calculo)}kg)")
+                    cols_grid = st.columns(4)
+                    for i in range(1, 13):
+                        peso_rm_i = rm_calculo * (1.0278 - 0.0278 * i)
+                        if i == 1: peso_rm_i = rm_calculo
+                        
+                        with cols_grid[(i-1)%4]:
+                            st.markdown(f"""
+                            <div class="rm-card">
+                                <div class="rm-title">{i}RM</div>
+                                <div class="rm-value">{int(peso_rm_i)}</div>
+                                <div class="rm-unit">kg</div>
+                            </div>
+                            <div style="margin-bottom:10px;"></div>
+                            """, unsafe_allow_html=True)
 
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown("#### % Cargas de Trabajo")
-                
-                # --- CALCULADORA DE PORCENTAJE PERSONALIZADO ---
-                with st.container(border=True):
-                    st.caption("🎯 **Calculadora de % Exacto**")
-                    col_calc1, col_calc2 = st.columns([1, 2])
-                    porc_custom = col_calc1.number_input("Ingresa %", min_value=1.0, max_value=200.0, value=72.5, step=0.5)
-                    val_custom = rm_calculo * (porc_custom / 100)
-                    col_calc2.info(f"🔥 **{porc_custom}%** = {val_custom:.1f} kg")
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                # --- TABLA DE PORCENTAJES FIJOS ---
-                col_p1, col_p2 = st.columns(2)
-                porcentajes = [125, 120, 115, 110, 105, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30]
-                
-                for idx, porc in enumerate(porcentajes):
-                    val_p = rm_calculo * (porc / 100)
-                    texto = f"**{porc}%** : {int(val_p)} kg"
-                    if idx % 2 == 0: col_p1.info(texto)
-                    else: col_p2.info(texto)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown("#### % Cargas de Trabajo")
+                    
+                    # --- CALCULADORA DE PORCENTAJE PERSONALIZADO ---
+                    with st.container(border=True):
+                        st.caption("🎯 **Calculadora de % Exacto**")
+                        col_calc1, col_calc2 = st.columns([1, 2])
+                        porc_custom = col_calc1.number_input("Ingresa %", min_value=1.0, max_value=200.0, value=72.5, step=0.5)
+                        val_custom = rm_calculo * (porc_custom / 100)
+                        col_calc2.info(f"🔥 **{porc_custom}%** = {val_custom:.1f} kg")
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    # --- TABLA DE PORCENTAJES FIJOS ---
+                    col_p1, col_p2 = st.columns(2)
+                    porcentajes = [125, 120, 115, 110, 105, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30]
+                    
+                    for idx, porc in enumerate(porcentajes):
+                        val_p = rm_calculo * (porc / 100)
+                        texto = f"**{porc}%** : {int(val_p)} kg"
+                        if idx % 2 == 0: col_p1.info(texto)
+                        else: col_p2.info(texto)
