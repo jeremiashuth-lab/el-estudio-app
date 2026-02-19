@@ -12,6 +12,7 @@ import calendar
 import time
 import re
 import itertools
+import math
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -91,6 +92,38 @@ def cargar_estilos():
         .stAppDeployButton {
             display: none !important;
             visibility: hidden !important;
+        }
+
+        /* Estilo para las tarjetas de RM */
+        .rm-card {
+            background-color: #262730;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid #333;
+        }
+        .rm-title { font-size: 0.9rem; color: #aaa; }
+        .rm-value { font-size: 1.5rem; font-weight: 800; color: #E63946; }
+        .rm-unit { font-size: 0.8rem; color: #aaa; }
+        
+        /* Métricas personalizadas */
+        .big-metric {
+            font-size: 3rem;
+            font-weight: 800;
+            color: #E63946;
+            text-align: center;
+        }
+        .sub-metric {
+            font-size: 1rem;
+            color: #aaa;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        /* --- BORDE ROJO GRUESO PARA BLOQUES AGRUPADOS --- */
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.red-border-trigger) {
+            border: 3px solid #E63946 !important;
+            border-radius: 10px !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -174,7 +207,23 @@ def leer_registros_alumno(alumno):
         else: df_alumno["Reps_Grafico"] = 0.0
     return df_alumno
 
-# --- 5. FUNCIONES DE ESCRITURA (CON PROTOCOLO DE SEGURIDAD) ---
+# --- LÓGICA DE CÁLCULO 1RM PROMEDIO ---
+def calcular_1rm_promedio(peso, reps):
+    if reps == 1: return peso
+    if reps == 0: return 0
+    # Fórmulas
+    brzycki = peso / (1.0278 - 0.0278 * reps)
+    epley = peso * (1 + 0.0333 * reps)
+    lander = (100 * peso) / (101.3 - 2.67123 * reps)
+    lombardi = peso * (reps ** 0.10)
+    mayhew = (100 * peso) / (52.2 + (41.9 * math.exp(-0.055 * reps)))
+    oconner = peso * (1 + 0.025 * reps)
+    wathen = (100 * peso) / (48.8 + (53.8 * math.exp(-0.075 * reps)))
+    # Promedio
+    promedio = (brzycki + epley + lander + lombardi + mayhew + oconner + wathen) / 7
+    return promedio
+
+# --- 5. FUNCIONES DE ESCRITURA (BLINDADAS) ---
 def obtener_usuario(usuario_input, password_input):
     try:
         df = obtener_todos_usuarios()
@@ -197,17 +246,10 @@ def recuperar_usuario_por_nombre(usuario_input):
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
 
-# --- FUNCIÓN BLINDADA CONTRA BORRADOS ACCIDENTALES ---
 def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Rutinas")
     all_data = ws.get_all_records()
-    
-    # 1. VERIFICACIÓN DE LECTURA
-    # Si la hoja tiene datos pero 'all_data' vino vacío (fallo de red), ABORTAR.
-    # Asumimos que si hay más de 5 filas en total, la DB no está vacía.
-    # Si es la primera vez que se usa la app, esto no aplica, pero asumimos que ya hay datos.
-    
     cols = ["Alumno", "Dia", "Seccion", "Orden", "Ejercicio", "Link", "Series", "Reps", "Kg", "Notas"]
     nuevas_filas = []
     
@@ -229,27 +271,20 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
 
     df_old = pd.DataFrame(all_data)
     
-    # 2. CONSTRUCCIÓN DE LA NUEVA DB
     if not df_old.empty:
         df_old.columns = [c.strip().capitalize() for c in df_old.columns]
-        # Mantenemos todo lo que NO sea del alumno+dia actual
         mask = ~((df_old["Alumno"].astype(str).str.lower() == alumno.lower()) & (df_old["Dia"].astype(str) == dia))
         df_clean = df_old[mask]
         df_final = pd.concat([df_clean, pd.DataFrame(nuevas_filas)], ignore_index=True)
     else:
-        # Si df_old está vacío, SOLO procedemos si nuevas_filas tiene algo 
-        # y estamos seguros de que es una DB nueva.
         df_final = pd.DataFrame(nuevas_filas)
 
-    # 3. PROTOCOLO DE SEGURIDAD (ANTI-WIPE)
-    # Si la DB original tenía muchos datos (ej: >50 filas) y la nueva tiene muy pocos (ej: <10)
-    # significa que algo falló en la lectura y estamos a punto de borrar a todos.
+    # PROTOCOLO DE SEGURIDAD
     filas_antes = len(df_old)
     filas_despues = len(df_final)
-    
     if filas_antes > 20 and filas_despues < 10:
-        st.error(f"🚨 ERROR DE SEGURIDAD CRÍTICO: La aplicación intentó borrar {filas_antes - filas_despues} filas por error de conexión. El guardado se canceló para proteger los datos de los otros alumnos. Intenta de nuevo en unos segundos.")
-        return # DETENEMOS LA EJECUCIÓN AQUÍ
+        st.error(f"🚨 ERROR DE SEGURIDAD CRÍTICO: La aplicación intentó borrar datos. Guardado cancelado.")
+        return 
 
     df_final = df_final.fillna("")
     for c in cols: 
@@ -421,6 +456,8 @@ def renderizar_bloque_seccion(titulo, df_seccion):
         items = list(grupo)
         if bloque != "SIN_BLOQUE":
             with st.container(border=True):
+                # --- HACK CSS PARA ACTIVAR EL BORDE ROJO ---
+                st.markdown("<div class='red-border-trigger'></div>", unsafe_allow_html=True)
                 for idx, row, _ in items:
                     render_tarjeta_individual(idx, row)
         else:
@@ -598,28 +635,12 @@ else:
                         df_plt = df_r[df_r["Ejercicio"] == ej_v].sort_values("Fecha", ascending=True)
                         if not df_plt.empty:
                             df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
-                            ultimo_1rm = df_plt["1RM"].iloc[-1]
-                            st.metric(f"🔥 1RM Actual Estimado", f"{ultimo_1rm:.1f} kg")
-                            st.line_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
-                            st.info("ℹ️ **¿Qué es el 1RM?** Es tu Repetición Máxima Estimada. Indica el peso máximo teórico que podrías levantar a 1 sola repetición. ¡Si la curva sube, te estás volviendo más fuerte!")
-                            
-                            st.markdown("#### 🗂️ Historial")
-                            df_feed = df_plt.sort_values("Fecha", ascending=False)
-                            for idx, row in df_feed.iterrows():
-                                with st.container(border=True):
-                                    c1, c2 = st.columns([1, 4])
-                                    with c1: st.write(f"**{row['Fecha'].strftime('%d/%m')}**")
-                                    with c2:
-                                        reps_txt = str(row.get('Repeticiones', row.get('Reps', '')))
-                                        peso_txt = str(row.get('Peso', ''))
-                                        rpe_txt = str(row.get('Rpe', '-'))
-                                        st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}** | ⚡ **RPE: {rpe_txt}**")
-                                        if str(row.get('Notas','')).strip(): st.caption(f"📝 {row['Notas']}")
+                            st.bar_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
 
     else:
         # VISTA ALUMNO
         st.title(f"RUTINA DE {nombre.upper()}")
-        t1, t2 = st.tabs(["💪 ENTRENAR", "📈 PROGRESO"])
+        t1, t2, t3 = st.tabs(["💪 ENTRENAR", "📅 ASISTENCIA", "📝 BITÁCORA"])
         
         with t1:
             rut = leer_rutina(alias)
@@ -687,7 +708,7 @@ else:
             else: st.info("No tienes rutina asignada aún.")
             
         with t2:
-            st.markdown("### 📊 Mi Constancia")
+            st.markdown("### 📅 Asistencia")
             dfs = leer_sesiones_alumno(alias)
             
             MESES_LIST = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
@@ -715,53 +736,93 @@ else:
                     st.success(f"Entreno del {fecha_pasada.strftime('%d/%m')} guardado.")
                     st.cache_data.clear(); time.sleep(1); st.rerun()
 
-            st.markdown("---")
-            st.markdown("### 📈 Mi Progreso")
+        with t3:
+            st.markdown("### 📝 Bitácora")
             
             df_r = leer_registros_alumno(alias)
-            if not df_r.empty:
-                with st.expander("🛠️ Corregir Últimos Registros", expanded=False):
-                    df_r_sorted = df_r.sort_values("Fecha", ascending=False).head(30)
-                    if not df_r_sorted.empty:
-                        df_r_sorted["Display"] = df_r_sorted["Fecha"].dt.strftime("%d/%m") + " - " + df_r_sorted["Ejercicio"] + " (" + df_r_sorted["Peso"].astype(str) + "kg)"
-                        sel_reg = st.selectbox("Selecciona registro:", df_r_sorted["Display"].tolist())
-                        reg_data = df_r_sorted[df_r_sorted["Display"] == sel_reg].iloc[0]
-                        with st.form("form_edicion_movil"):
-                            st.caption(f"Editando: {sel_reg}")
-                            new_kg = st.text_input("Peso", value=str(reg_data["Peso"]))
-                            new_reps = st.text_input("Reps", value=str(reg_data.get("Repeticiones", reg_data.get("Reps", ""))))
-                            new_nota = st.text_area("Nota", value=str(reg_data.get("Notas", "")))
-                            if st.form_submit_button("CORREGIR", use_container_width=True):
-                                fecha_str = reg_data["Fecha"].strftime("%Y-%m-%d")
-                                exito = editar_un_registro_especifico(alias, fecha_str, reg_data["Ejercicio"], new_kg, new_reps, new_nota)
-                                if exito: st.success("Listo!"); st.cache_data.clear(); st.rerun()
-                                else: st.error("Error al guardar.")
+            ultimo_1rm_val = 0
+            
+            if not df_r.empty and "Peso_Grafico" in df_r.columns:
+                lista_ej = df_r["Ejercicio"].unique()
+                if len(lista_ej) > 0:
+                    ej_sel = st.selectbox("Selecciona Ejercicio:", lista_ej)
+                    df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=True)
+                    
+                    if not df_plt.empty:
+                        st.caption(f"Historial de Cargas: {ej_sel}")
+                        df_chart = df_plt.copy()
+                        df_chart["Reps_Label"] = df_chart["Reps_Grafico"].astype(int).astype(str) + " reps"
+                        st.bar_chart(df_chart, x="Reps_Label", y="Peso_Grafico", color="#E63946")
+                        
+                        cols_view = ["Fecha", "Peso", "Repeticiones", "Rpe", "Notas"]
+                        for c in cols_view:
+                            if c not in df_plt.columns: df_plt[c] = "-"
+                        st.dataframe(df_plt[cols_view].sort_values("Fecha", ascending=False), use_container_width=True, hide_index=True)
+                        
+                        last_row = df_plt.iloc[-1]
+                        ultimo_1rm_val = calcular_1rm_promedio(last_row["Peso_Grafico"], last_row["Reps_Grafico"])
+                    else:
+                        st.info("Sin datos para este ejercicio.")
+                else:
+                    st.info("No hay ejercicios registrados.")
+            else:
+                st.info("Aún no tienes registros en tu bitácora.")
+
+            st.markdown("---")
+            
+            st.markdown(f"<div class='sub-metric'>ESTIMACIÓN ACTUAL (Basado en tu último registro)</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='big-metric'>{int(ultimo_1rm_val)} kg</div>", unsafe_allow_html=True)
+            
+            st.markdown("---")
+
+            st.markdown("### 🧮 Calculadora")
+            with st.container(border=True):
+                c_peso, c_reps = st.columns(2)
+                p_in = c_peso.number_input("Peso (kg)", min_value=0.0, step=1.0, value=0.0)
+                r_in = c_reps.number_input("Repeticiones", min_value=1, max_value=30, step=1, value=5)
+            
+            rm_calculo = 0
+            if p_in > 0:
+                rm_calculo = calcular_1rm_promedio(p_in, r_in)
+            elif ultimo_1rm_val > 0:
+                rm_calculo = ultimo_1rm_val
+            
+            if rm_calculo > 0:
+                st.caption(f"TABLA DE FUERZA (Base: {int(rm_calculo)}kg)")
+                cols_grid = st.columns(4)
+                for i in range(1, 13):
+                    peso_rm_i = rm_calculo * (1.0278 - 0.0278 * i)
+                    if i == 1: peso_rm_i = rm_calculo
+                    
+                    with cols_grid[(i-1)%4]:
+                        st.markdown(f"""
+                        <div class="rm-card">
+                            <div class="rm-title">{i}RM</div>
+                            <div class="rm-value">{int(peso_rm_i)}</div>
+                            <div class="rm-unit">kg</div>
+                        </div>
+                        <div style="margin-bottom:10px;"></div>
+                        """, unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("#### % Cargas de Trabajo")
                 
-                if "Peso_Grafico" in df_r.columns:
-                     st.markdown("<br>", unsafe_allow_html=True)
-                     lista_ej = df_r["Ejercicio"].unique()
-                     if len(lista_ej) > 0:
-                         ej_sel = st.selectbox("Ver Gráfico de:", lista_ej)
-                         df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=True)
-                         if not df_plt.empty:
-                            df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
-                            ultimo_1rm = df_plt["1RM"].iloc[-1]
-                            st.metric(f"🔥 1RM Actual Estimado", f"{ultimo_1rm:.1f} kg")
-                            st.line_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
-                            st.info("ℹ️ **¿Qué es el 1RM?** Es tu Repetición Máxima Estimada. Indica el peso máximo teórico que podrías levantar a 1 sola repetición. ¡Si la curva sube, te estás volviendo más fuerte!")
-                            
-                            st.markdown("#### 🗂️ Historial")
-                            df_feed = df_plt.sort_values("Fecha", ascending=False)
-                            for idx, row in df_feed.iterrows():
-                                with st.container(border=True):
-                                    c1, c2 = st.columns([1, 4])
-                                    with c1: st.write(f"**{row['Fecha'].strftime('%d/%m')}**")
-                                    with c2:
-                                        reps_txt = str(row.get('Repeticiones', row.get('Reps', '')))
-                                        peso_txt = str(row.get('Peso', ''))
-                                        # --- MOSTRAR RPE ---
-                                        rpe_txt = str(row.get('Rpe', '-'))
-                                        st.write(f"💪 **{peso_txt}** | 🔄 **{reps_txt}** | ⚡ **RPE: {rpe_txt}**")
-                                        if str(row.get('Notas','')).strip(): st.caption(f"📝 {row['Notas']}")
-            else: 
-                st.info("Aún no has registrado nada.")
+                # --- CALCULADORA DE PORCENTAJE PERSONALIZADO ---
+                with st.container(border=True):
+                    st.caption("🎯 **Calculadora de % Exacto**")
+                    col_calc1, col_calc2 = st.columns([1, 2])
+                    porc_custom = col_calc1.number_input("Ingresa %", min_value=1.0, max_value=200.0, value=72.5, step=0.5)
+                    val_custom = rm_calculo * (porc_custom / 100)
+                    col_calc2.info(f"🔥 **{porc_custom}%** = {val_custom:.1f} kg")
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # --- TABLA DE PORCENTAJES FIJOS ---
+                col_p1, col_p2 = st.columns(2)
+                porcentajes = [125, 120, 115, 110, 105, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30]
+                
+                for idx, porc in enumerate(porcentajes):
+                    val_p = rm_calculo * (porc / 100)
+                    texto = f"**{porc}%** : {int(val_p)} kg"
+                    if idx % 2 == 0: col_p1.info(texto)
+                    else: col_p2.info(texto)
