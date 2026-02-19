@@ -126,6 +126,11 @@ def cargar_estilos():
             border: 3px solid #E63946 !important;
             border-radius: 10px !important;
         }
+        
+        /* --- CONGELAR GRÁFICOS (Hacerlos no clickeables ni arrastrables) --- */
+        [data-testid="stArrowVegaLiteChart"], [data-testid="stVegaLiteChart"], canvas.marks {
+            pointer-events: none !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -457,9 +462,8 @@ def renderizar_bloque_seccion(titulo, df_seccion):
         items = list(grupo)
         if bloque != "SIN_BLOQUE":
             with st.container(border=True):
-                # --- HACK DOBLE: TEXTO VISIBLE + CLASE CSS OCULTA ---
-                # El texto garantiza que siempre se sepa que es un bloque, y la clase activa el borde si el navegador lo soporta.
-                st.markdown("<div class='red-border-trigger' style='text-align:center; color:#E63946; font-size:0.75rem; font-weight:800; margin-bottom:10px; letter-spacing:1px;'>🔴 BLOQUE EN CONJUNTO</div>", unsafe_allow_html=True)
+                # --- HACK SILENCIOSO PARA EL BORDE ROJO ---
+                st.markdown("<div class='red-border-trigger'></div>", unsafe_allow_html=True)
                 for idx, row, _ in items:
                     render_tarjeta_individual(idx, row)
         else:
@@ -753,15 +757,14 @@ else:
                     if not df_plt.empty:
                         st.caption(f"Historial de Cargas: {ej_sel}")
                         
-                        # --- GRAFICO ESTATICO (NO SE MUEVE AL SCROLLEAR) ---
+                        # --- GRÁFICO 100% ESTÁTICO Y CONGELADO ---
                         df_chart = df_plt.copy()
                         df_chart["Reps_Label"] = df_chart["Reps_Grafico"].astype(int).astype(str) + " reps"
                         
                         chart = alt.Chart(df_chart).mark_bar(color="#E63946").encode(
-                            x=alt.X('Reps_Label:O', sort=None, title="Repeticiones"),
-                            y=alt.Y('Peso_Grafico:Q', title="Kilos"),
-                            tooltip=['Fecha', 'Peso_Grafico', 'Reps_Label']
-                        ).properties(height=300).interactive(False) # Interactive(False) congela el gráfico
+                            x=alt.X('Reps_Label:O', sort=None, title="Repeticiones", axis=alt.Axis(labelAngle=0)),
+                            y=alt.Y('Peso_Grafico:Q', title="Kilos")
+                        ).properties(height=300) 
                         
                         st.altair_chart(chart, use_container_width=True)
                         
