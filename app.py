@@ -14,7 +14,9 @@ import re
 import itertools
 import math
 import altair as alt
-from functools import wraps # CTO: Herramienta para no perder la identidad de nuestras funciones
+from functools import wraps 
+# CTO: Importamos nuestra nueva herramienta para crear el "Sello VIP"
+import extra_streamlit_components as stx 
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -23,6 +25,14 @@ st.set_page_config(
     layout="wide", 
     initial_sidebar_state="expanded"
 )
+
+# --- CTO: INICIALIZAR EL SILLO VIP (COOKIES) ---
+# Configuramos la memoria del navegador para que dure 30 días
+@st.cache_resource(experimental_allow_widgets=True)
+def obtener_gestor_cookies():
+    return stx.CookieManager()
+
+gestor_cookies = obtener_gestor_cookies()
 
 # --- 2. ESTILOS CSS ---
 def cargar_estilos():
@@ -139,22 +149,18 @@ cargar_estilos()
 
 # --- CTO: LA ARMADURA DE REINTENTOS ---
 def reintentar_conexion(intentos=3, espera=2):
-    """
-    Este decorador envuelve nuestras funciones. Si el internet falla, 
-    espera unos segundos y lo vuelve a intentar antes de lanzar un error.
-    """
     def decorador(funcion):
-        @wraps(funcion) # Mantiene el nombre original de la función para no confundir a Streamlit
+        @wraps(funcion)
         def envoltura(*args, **kwargs):
             for intento in range(intentos):
                 try:
                     return funcion(*args, **kwargs)
                 except Exception as e:
                     if intento < intentos - 1:
-                        time.sleep(espera) # Esperamos antes de reintentar
+                        time.sleep(espera)
                     else:
                         st.error("⚠️ Tu conexión a internet parece inestable. Por favor, intenta de nuevo.")
-                        raise e # Solo mostramos el error si fallan todos los intentos
+                        raise e 
         return envoltura
     return decorador
 
@@ -162,7 +168,7 @@ def reintentar_conexion(intentos=3, espera=2):
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 @st.cache_resource
-@reintentar_conexion() # CTO: Protegemos la conexión inicial
+@reintentar_conexion()
 def conectar_google_sheet():
     if os.path.exists("mis_secretos.json"):
         creds = Credentials.from_service_account_file("mis_secretos.json", scopes=SCOPES)
@@ -176,7 +182,7 @@ def natural_sort_key(s):
 
 # --- 4. FUNCIONES DE LECTURA ---
 @st.cache_data(ttl=600)
-@reintentar_conexion() # CTO: Protegemos la lectura de usuarios
+@reintentar_conexion() 
 def obtener_todos_usuarios():
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
@@ -187,7 +193,7 @@ def obtener_todos_usuarios():
     return df
 
 @st.cache_data(ttl=600)
-@reintentar_conexion() # CTO: Protegemos la lectura de rutinas
+@reintentar_conexion() 
 def leer_rutina(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Rutinas").get_all_records())
@@ -198,7 +204,7 @@ def leer_rutina(alumno):
     return df[df["Alumno_Norm"] == alumno_norm].drop(columns=["Alumno_Norm"])
 
 @st.cache_data(ttl=600)
-@reintentar_conexion() # CTO: Protegemos la lectura de sesiones
+@reintentar_conexion()
 def leer_sesiones_alumno(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Sesiones").get_all_records())
@@ -213,7 +219,7 @@ def leer_sesiones_alumno(alumno):
     return df_alumno
 
 @st.cache_data(ttl=600)
-@reintentar_conexion() # CTO: Protegemos la lectura de la bitácora
+@reintentar_conexion() 
 def leer_registros_alumno(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Registros").get_all_records())
@@ -277,7 +283,7 @@ def recuperar_usuario_por_nombre(usuario_input):
         return usuario.iloc[0] if not usuario.empty else None
     except: return None
 
-@reintentar_conexion() # CTO: Protegemos el guardado de la rutina
+@reintentar_conexion() 
 def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Rutinas")
@@ -343,13 +349,13 @@ def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
     df_ca = pd.DataFrame(rows_ca) if rows_ca else pd.DataFrame()
     guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca)
 
-@reintentar_conexion() # CTO: Protegemos el registro de peso
+@reintentar_conexion() 
 def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=None):
     sh = conectar_google_sheet()
     fecha = fecha_input.strftime("%Y-%m-%d") if fecha_input else datetime.now().strftime("%Y-%m-%d") 
     sh.worksheet("Registros").append_row([fecha, usuario, ejercicio, peso, reps, rpe, notas])
 
-@reintentar_conexion() # CTO: Protegemos la edición de registros
+@reintentar_conexion() 
 def editar_un_registro_especifico(usuario, fecha_original, ejercicio_original, nuevo_peso, nuevas_reps, nueva_nota):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Registros")
@@ -369,7 +375,7 @@ def editar_un_registro_especifico(usuario, fecha_original, ejercicio_original, n
         return True
     return False
 
-@reintentar_conexion() # CTO: Protegemos las actualizaciones masivas
+@reintentar_conexion() 
 def actualizar_registros_masivo(usuario, df_editado):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Registros")
@@ -389,7 +395,7 @@ def actualizar_registros_masivo(usuario, df_editado):
     ws.clear()
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
 
-@reintentar_conexion() # CTO: Protegemos la asistencia
+@reintentar_conexion() 
 def guardar_estado_sesion(usuario, estado, fecha_dt=None):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Sesiones")
@@ -520,18 +526,27 @@ def render_tarjeta_individual(idx, row):
         with c_kg: st.text_input("Kg Realizados", value=val_kg, key=k_kg)
         with c_notas: st.text_area("Notas / Instrucciones", value=val_notas, key=k_notas, height=68)
 
-# --- 6. GESTIÓN DE LOGIN ---
+# --- 6. GESTIÓN DE LOGIN BLINDADA ---
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 
 if not st.session_state['logueado']:
-    params = st.query_params
-    user_url = params.get("u", None)
-    if user_url:
-        u_data = recuperar_usuario_por_nombre(user_url)
+    # CTO: Primero buscamos si hay ticket en la URL, si no, buscamos la Cookie VIP.
+    usuario_url = st.query_params.get("u", None)
+    usuario_cookie = gestor_cookies.get(cookie="sello_vip_estudio")
+    
+    usuario_a_validar = usuario_url if usuario_url else usuario_cookie
+
+    if usuario_a_validar:
+        u_data = recuperar_usuario_por_nombre(usuario_a_validar)
         if u_data is not None:
             st.session_state['logueado'] = True
             st.session_state['usuario_info'] = u_data
-        else: st.query_params.clear()
+            
+            # Si entramos con la Cookie, forzamos que la URL también tenga el nombre
+            if str(u_data.get('Rol','')).lower() == 'alumno':
+                st.query_params["u"] = u_data['Usuario']
+        else: 
+            st.query_params.clear()
 
 if not st.session_state['logueado']:
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -546,8 +561,15 @@ if not st.session_state['logueado']:
                     if user is not None: 
                         st.session_state['logueado'] = True
                         st.session_state['usuario_info'] = user
+                        
+                        # CTO: ¡Aquí ponemos el Sello VIP! Caduca en 30 días.
+                        fecha_expiracion = datetime.now() + timedelta(days=30)
+                        gestor_cookies.set("sello_vip_estudio", user['Usuario'], expires_at=fecha_expiracion)
+
                         if str(user.get('Rol','')).lower() == 'alumno':
                             st.query_params["u"] = user['Usuario']
+                        
+                        time.sleep(0.5) # Pausa mínima para que el navegador guarde la galleta
                         st.rerun()
                     else: st.error("❌ Error")
 else:
@@ -563,7 +585,12 @@ else:
         if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): 
             st.cache_data.clear(); st.rerun()
         if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
-            st.session_state['logueado'] = False; st.query_params.clear(); st.rerun()
+            # CTO: Borramos el Sello VIP al cerrar sesión
+            gestor_cookies.delete("sello_vip_estudio")
+            st.session_state['logueado'] = False
+            st.query_params.clear()
+            time.sleep(0.5)
+            st.rerun()
 
     if rol == "admin":
         st.title("🎛️ PANEL DE CONTROL")
