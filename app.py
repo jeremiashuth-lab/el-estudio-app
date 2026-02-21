@@ -22,7 +22,7 @@ st.set_page_config(
     page_title="El Estudio", 
     page_icon="🔥", 
     layout="wide", 
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed" # CTO: Lo colapsamos por defecto
 )
 
 # --- INICIALIZAR EL SELLO VIP (COOKIES) ---
@@ -517,27 +517,15 @@ else:
     nombre = str(datos.get('Nombre', 'Usuario')).strip()
     alias = str(datos.get('Usuario', '')).strip()
 
-    with st.sidebar:
-        st.markdown(f"## {nombre.upper()}")
-        st.caption(f"ROL: {rol.upper()}")
-        st.divider()
-        if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): 
-            st.cache_data.clear(); st.rerun()
-        if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
-            gestor_cookies.delete("sello_vip_estudio")
-            st.session_state['logueado'] = False
-            st.query_params.clear()
-            time.sleep(0.5)
-            st.rerun()
-
-    # --- CTO: PANEL DE ADMINISTRADOR OPTIMIZADO ---
+    # --- CTO: PANEL DE ADMINISTRADOR ---
     if rol == "admin":
         st.title("🎛️ PANEL DE CONTROL")
-        tab1, tab2 = st.tabs(["📝 DISEÑO DE RUTINAS", "📊 ESTADÍSTICAS"])
+        # CTO: Agregamos la pestaña de Perfil al final
+        tab1, tab2, tab3 = st.tabs(["📝 DISEÑO DE RUTINAS", "📊 ESTADÍSTICAS", "⚙️ PERFIL"])
+        
         with tab1:
             st.markdown("### 👤 Seleccionar Alumno y Día")
             with st.container(border=True):
-                # CTO: Solución 1 - Botones horizontales para los días (Evita el teclado)
                 us = obtener_todos_usuarios()
                 als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
                 
@@ -566,7 +554,6 @@ else:
             d_fue = preparar_df_editor(d_fue, cols_f, filas_minimas=8)
             d_car = preparar_df_editor(d_car, cols_ca, filas_minimas=3)
             
-            # CTO: Solución 3 - Corsé para las tablas (UX de Celular)
             cfg_comun = {
                 "Ejercicio": st.column_config.TextColumn("Ejercicio", width="medium", required=True),
                 "Link": st.column_config.LinkColumn("📺", width="small"),
@@ -578,7 +565,6 @@ else:
             cfg_fuerza["Orden"] = st.column_config.TextColumn("Ord.", width="small")
             cfg_fuerza["Kg"] = st.column_config.TextColumn("Kg", width="small")
             
-            # Función local rápida para guardar
             def trigger_guardado():
                 guardar_rutina_actualizada(alu, dia, st.session_state[f"c_{alu}_{dia}"], st.session_state[f"f_{alu}_{dia}"], st.session_state[f"ca_{alu}_{dia}"])
                 leer_rutina.clear() 
@@ -586,7 +572,6 @@ else:
 
             st.markdown("---")
             
-            # CTO: Solución 2 - Botón de Guardado Superior (Anti Pérdida)
             c_g_top, c_d_top = st.columns([1, 1])
             with c_g_top:
                 st.button("💾 GUARDAR RUTINA RÁPIDO", type="primary", use_container_width=True, on_click=trigger_guardado, key="btn_guardar_top")
@@ -598,7 +583,6 @@ else:
                 st.info("💡 **Tip CTO:** Las columnas están compactadas para que entren mejor en tu celular. No olvides presionar Guardar.")
                 
                 st.caption("🔥 CALENTAMIENTO")
-                # Escondemos el índice (1, 2, 3...) para ganar espacio: hide_index=True
                 st.data_editor(d_cal, num_rows="dynamic", use_container_width=True, key=f"c_{alu}_{dia}", column_config=cfg_comun, hide_index=True)
                 
                 st.caption("🏋️‍♂️ FUERZA")
@@ -607,7 +591,6 @@ else:
                 st.caption("🏃‍♂️ CARDIO")
                 st.data_editor(d_car, num_rows="dynamic", use_container_width=True, key=f"ca_{alu}_{dia}", column_config=cfg_comun, hide_index=True)
             
-            # Botón de Guardado Inferior
             c_g_bot, c_d_bot = st.columns([1, 1])
             with c_g_bot:
                 st.button("💾 GUARDAR RUTINA", type="primary", use_container_width=True, on_click=trigger_guardado, key="btn_guardar_bot")
@@ -665,11 +648,34 @@ else:
                         if not df_plt.empty:
                             df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
                             st.bar_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
+                            
+        # --- CTO: NUEVA PESTAÑA PERFIL ADMIN ---
+        with tab3:
+            st.markdown(f"### 👤 Perfil: {nombre.upper()}")
+            st.caption("Administrador Principal")
+            st.divider()
+            st.info("Desde aquí puedes gestionar tu cuenta y el rendimiento de la aplicación.")
+            
+            if st.button("🔴 LIMPIAR CACHÉ DE LA APP", use_container_width=True): 
+                st.cache_data.clear()
+                st.success("Memoria borrada. Actualizando...")
+                time.sleep(1)
+                st.rerun()
+                
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
+                gestor_cookies.delete("sello_vip_estudio")
+                st.session_state['logueado'] = False
+                st.query_params.clear()
+                time.sleep(0.5)
+                st.rerun()
 
     else:
-        # VISTA ALUMNO
+        # --- VISTA ALUMNO ---
         st.title(f"RUTINA DE {nombre.upper()}")
-        t1, t2, t3 = st.tabs(["💪 ENTRENAR", "📅 ASISTENCIA", "📝 BITÁCORA"])
+        
+        # CTO: Agregamos la pestaña de Perfil al final
+        t1, t2, t3, t4 = st.tabs(["💪 ENTRENAR", "📅 ASISTENCIA", "📝 BITÁCORA", "⚙️ PERFIL"])
         
         with t1:
             rut = leer_rutina(alias)
@@ -914,3 +920,18 @@ else:
                         texto = f"**{porc}%** : {int(val_p)} kg"
                         if idx % 2 == 0: col_p1.info(texto)
                         else: col_p2.info(texto)
+                        
+        # --- CTO: NUEVA PESTAÑA PERFIL ALUMNO ---
+        with t4:
+            st.markdown(f"### 👤 Perfil: {nombre}")
+            st.caption(f"Usuario activo: {alias}")
+            st.divider()
+            
+            st.info("💡 Desde aquí puedes cerrar tu sesión de forma segura si compartes este dispositivo o deseas ingresar con otra cuenta.")
+            
+            if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
+                gestor_cookies.delete("sello_vip_estudio")
+                st.session_state['logueado'] = False
+                st.query_params.clear()
+                time.sleep(0.5)
+                st.rerun()
