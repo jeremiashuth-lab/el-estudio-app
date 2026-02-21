@@ -530,19 +530,19 @@ else:
             time.sleep(0.5)
             st.rerun()
 
+    # --- CTO: PANEL DE ADMINISTRADOR OPTIMIZADO ---
     if rol == "admin":
         st.title("🎛️ PANEL DE CONTROL")
-        tab1, tab2 = st.tabs(["📝 DISEÑO", "📊 ESTADÍSTICAS"])
+        tab1, tab2 = st.tabs(["📝 DISEÑO DE RUTINAS", "📊 ESTADÍSTICAS"])
         with tab1:
+            st.markdown("### 👤 Seleccionar Alumno y Día")
             with st.container(border=True):
-                c1, c2, c3 = st.columns([3, 3, 1]) 
-                with c3: 
-                    st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-                    if st.button("🔄", key="ref_admin"): st.cache_data.clear(); st.rerun()
+                # CTO: Solución 1 - Botones horizontales para los días (Evita el teclado)
                 us = obtener_todos_usuarios()
                 als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
-                with c1: alu = st.selectbox("ALUMNO", als)
-                with c2: dia = st.selectbox("DÍA", ["Día 1", "Día 2", "Día 3", "Día 4"])
+                
+                alu = st.selectbox("ALUMNO", als)
+                dia = st.radio("DÍA", ["Día 1", "Día 2", "Día 3", "Día 4", "Día 5"], horizontal=True)
 
             rut = leer_rutina(alu)
             cols_c = ["Ejercicio", "Link", "Series", "Reps", "Notas"]
@@ -565,25 +565,55 @@ else:
             d_cal = preparar_df_editor(d_cal, cols_c, filas_minimas=4)
             d_fue = preparar_df_editor(d_fue, cols_f, filas_minimas=8)
             d_car = preparar_df_editor(d_car, cols_ca, filas_minimas=3)
-            col_link = st.column_config.LinkColumn("Link", display_text="🔗")
             
-            with st.expander("✏️ EDITOR DE RUTINA", expanded=True):
-                st.caption("CALENTAMIENTO")
-                ed_c = st.data_editor(d_cal, num_rows="dynamic", use_container_width=True, key=f"c_{alu}_{dia}", column_config={"Link": col_link})
-                st.caption("FUERZA")
-                ed_f = st.data_editor(d_fue, num_rows="dynamic", use_container_width=True, height=400, key=f"f_{alu}_{dia}", column_config={"Link": col_link})
-                st.caption("CARDIO")
-                ed_ca = st.data_editor(d_car, num_rows="dynamic", use_container_width=True, key=f"ca_{alu}_{dia}", column_config={"Link": col_link})
+            # CTO: Solución 3 - Corsé para las tablas (UX de Celular)
+            cfg_comun = {
+                "Ejercicio": st.column_config.TextColumn("Ejercicio", width="medium", required=True),
+                "Link": st.column_config.LinkColumn("📺", width="small"),
+                "Series": st.column_config.TextColumn("Ser.", width="small"),
+                "Reps": st.column_config.TextColumn("Rep.", width="small"),
+                "Notas": st.column_config.TextColumn("Notas", width="medium")
+            }
+            cfg_fuerza = cfg_comun.copy()
+            cfg_fuerza["Orden"] = st.column_config.TextColumn("Ord.", width="small")
+            cfg_fuerza["Kg"] = st.column_config.TextColumn("Kg", width="small")
             
-            c_g, c_d = st.columns([1, 1])
-            with c_g:
-                if st.button("💾 GUARDAR RUTINA", type="primary", use_container_width=True):
-                    guardar_rutina_actualizada(alu, dia, ed_c, ed_f, ed_ca)
-                    leer_rutina.clear() 
-                    st.success("Guardado."); time.sleep(1); st.rerun()
-            with c_d:
+            # Función local rápida para guardar
+            def trigger_guardado():
+                guardar_rutina_actualizada(alu, dia, st.session_state[f"c_{alu}_{dia}"], st.session_state[f"f_{alu}_{dia}"], st.session_state[f"ca_{alu}_{dia}"])
+                leer_rutina.clear() 
+                st.success("✅ Guardado Exitoso."); time.sleep(1); st.rerun()
+
+            st.markdown("---")
+            
+            # CTO: Solución 2 - Botón de Guardado Superior (Anti Pérdida)
+            c_g_top, c_d_top = st.columns([1, 1])
+            with c_g_top:
+                st.button("💾 GUARDAR RUTINA RÁPIDO", type="primary", use_container_width=True, on_click=trigger_guardado, key="btn_guardar_top")
+            with c_d_top:
                 if not rut.empty: 
-                    st.download_button("📥 DESCARGAR WORD", generar_word(alu, rut), f"{alu}.docx", use_container_width=True)
+                    st.download_button("📥 DESCARGAR WORD", generar_word(alu, rut), f"{alu}.docx", use_container_width=True, key="btn_word_top")
+
+            with st.expander("✏️ EDITOR DE RUTINA", expanded=True):
+                st.info("💡 **Tip CTO:** Las columnas están compactadas para que entren mejor en tu celular. No olvides presionar Guardar.")
+                
+                st.caption("🔥 CALENTAMIENTO")
+                # Escondemos el índice (1, 2, 3...) para ganar espacio: hide_index=True
+                st.data_editor(d_cal, num_rows="dynamic", use_container_width=True, key=f"c_{alu}_{dia}", column_config=cfg_comun, hide_index=True)
+                
+                st.caption("🏋️‍♂️ FUERZA")
+                st.data_editor(d_fue, num_rows="dynamic", use_container_width=True, height=400, key=f"f_{alu}_{dia}", column_config=cfg_fuerza, hide_index=True)
+                
+                st.caption("🏃‍♂️ CARDIO")
+                st.data_editor(d_car, num_rows="dynamic", use_container_width=True, key=f"ca_{alu}_{dia}", column_config=cfg_comun, hide_index=True)
+            
+            # Botón de Guardado Inferior
+            c_g_bot, c_d_bot = st.columns([1, 1])
+            with c_g_bot:
+                st.button("💾 GUARDAR RUTINA", type="primary", use_container_width=True, on_click=trigger_guardado, key="btn_guardar_bot")
+            with c_d_bot:
+                if not rut.empty: 
+                    st.download_button("📥 DESCARGAR WORD", generar_word(alu, rut), f"{alu}.docx", use_container_width=True, key="btn_word_bot")
 
         with tab2:
             us = obtener_todos_usuarios()
@@ -758,7 +788,6 @@ else:
                     leer_sesiones_alumno.clear() 
                     time.sleep(1); st.rerun()
 
-        # --- CTO: PESTAÑA DE BITÁCORA (Filtros, Gráficos y UX) ---
         with t3:
             st.markdown("### 📝 Bitácora")
             
@@ -769,15 +798,12 @@ else:
                 if len(lista_ej) > 0:
                     ej_sel_bitacora = st.selectbox("📊 Selecciona un Ejercicio para ver tu progreso:", lista_ej, key="sel_bitacora")
                     
-                    # Filtramos TODO (Gráfico y Tabla) solo para este ejercicio
                     df_plt = df_r[df_r["Ejercicio"] == ej_sel_bitacora].sort_values("Fecha", ascending=True).copy()
                     
                     if not df_plt.empty:
-                        # --- CTO: Gráfico Inteligente (Barras + Carteles de Reps) ---
                         df_chart = df_plt.copy().reset_index(drop=True)
                         df_chart["Fecha_Str"] = df_chart["Fecha"].dt.strftime("%d/%m")
                         
-                        # Si el alumno hace 3 series en un mismo día, separamos las etiquetas
                         df_chart['Set_Num'] = df_chart.groupby('Fecha_Str').cumcount() + 1
                         df_chart['Eje_X'] = df_chart['Fecha_Str'] + " (S" + df_chart['Set_Num'].astype(str) + ")"
                         df_chart['Reps_Cartel'] = df_chart['Reps_Grafico'].astype(int).astype(str) + "r"
@@ -786,7 +812,6 @@ else:
                             x=alt.X('Eje_X:N', sort=None, title="Fecha y Serie", axis=alt.Axis(labelAngle=-45))
                         )
                         
-                        # Las barras rojas (Kilos)
                         barras = base.mark_bar(color="#E63946", opacity=0.9, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
                             y=alt.Y('Peso_Grafico:Q', title="Kilos Levantados"),
                             tooltip=[
@@ -797,9 +822,8 @@ else:
                             ]
                         )
                         
-                        # Los carteles blancos arriba de las barras (Repeticiones)
                         textos = base.mark_text(
-                            dy=-10, # Esto sube el texto un poco por encima de la barra
+                            dy=-10, 
                             color="white",
                             fontWeight="bold"
                         ).encode(
@@ -807,7 +831,6 @@ else:
                             text=alt.Text('Reps_Cartel:N')
                         )
                         
-                        # Combinamos barras y texto
                         chart = (barras + textos).properties(height=320) 
                         st.altair_chart(chart, use_container_width=True)
                         
@@ -818,7 +841,6 @@ else:
                 
                 st.markdown("---")
                 
-                # --- CTO: El Archivero por Cajones (Corrector filtrado) ---
                 st.markdown(f"#### ✏️ Corrector de Registros: {ej_sel_bitacora}")
                 st.caption("Corrige o borra filas y presiona Guardar. Para borrar una fila, selecciónala y presiona Suprimir/Borrar.")
                 
@@ -826,12 +848,10 @@ else:
                 for c in cols_show:
                     if c not in df_plt.columns: df_plt[c] = ""
                 
-                # Mostramos SOLO el historial del ejercicio seleccionado
                 df_hist_editor = df_plt[cols_show].sort_values("Fecha", ascending=False)
                 edited_hist_alu = st.data_editor(df_hist_editor, num_rows="dynamic", key=f"hist_edit_alu_{alias}", use_container_width=True)
                 
                 if st.button("💾 GUARDAR CORRECCIONES", use_container_width=True):
-                    # CTO: Unimos las correcciones nuevas con el resto de los ejercicios que estaban ocultos para no borrarlos
                     df_otros_ejercicios = df_r[df_r["Ejercicio"] != ej_sel_bitacora]
                     df_a_guardar = pd.concat([df_otros_ejercicios, edited_hist_alu], ignore_index=True)
                     df_a_guardar["Usuario"] = alias
@@ -846,7 +866,6 @@ else:
 
             st.markdown("---")
 
-            # --- Calculadora Limpia y Ordenada ---
             st.markdown("### 🧮 Calculadora de 1RM")
             with st.container(border=True):
                 c_peso, c_reps = st.columns(2)
