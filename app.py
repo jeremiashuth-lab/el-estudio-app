@@ -15,7 +15,6 @@ import itertools
 import math
 import altair as alt
 from functools import wraps 
-# CTO: Importamos nuestra nueva herramienta para crear el "Sello VIP"
 import extra_streamlit_components as stx 
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
@@ -26,8 +25,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CTO: INICIALIZAR EL SILLO VIP (COOKIES) ---
-# Configuramos la memoria del navegador para que dure 30 días
 # --- CTO: INICIALIZAR EL SELLO VIP (COOKIES) ---
 gestor_cookies = stx.CookieManager()
 
@@ -83,25 +80,13 @@ def cargar_estilos():
         
         div[data-testid="stVerticalBlock"] { gap: 1rem; }
 
-        /* --- MODO KIOSCO / OCULTAR INTERFAZ --- */
         #MainMenu {visibility: hidden !important;}
         footer {visibility: hidden !important; display: none !important;}
         header {visibility: hidden !important;}
         
-        [data-testid="stToolbar"] {
-            visibility: hidden !important;
-            display: none !important;
-        }
-        
-        [data-testid="stHeader"] {
-            visibility: hidden !important;
-            background: transparent !important;
-        }
-        
-        .stAppDeployButton {
-            display: none !important;
-            visibility: hidden !important;
-        }
+        [data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
+        [data-testid="stHeader"] { visibility: hidden !important; background: transparent !important; }
+        .stAppDeployButton { display: none !important; visibility: hidden !important; }
 
         /* Estilo para las tarjetas de RM */
         .rm-card {
@@ -115,27 +100,13 @@ def cargar_estilos():
         .rm-value { font-size: 1.5rem; font-weight: 800; color: #E63946; }
         .rm-unit { font-size: 0.8rem; color: #aaa; }
         
-        /* Métricas personalizadas */
-        .big-metric {
-            font-size: 3rem;
-            font-weight: 800;
-            color: #E63946;
-            text-align: center;
-        }
-        .sub-metric {
-            font-size: 1rem;
-            color: #aaa;
-            text-align: center;
-            margin-bottom: 20px;
-        }
+        .big-metric { font-size: 3rem; font-weight: 800; color: #E63946; text-align: center; }
+        .sub-metric { font-size: 1rem; color: #aaa; text-align: center; margin-bottom: 20px; }
 
-        /* --- BORDE ROJO GRUESO PARA BLOQUES AGRUPADOS --- */
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.red-border-trigger) {
-            border: 3px solid #E63946 !important;
-            border-radius: 10px !important;
+            border: 3px solid #E63946 !important; border-radius: 10px !important;
         }
         
-        /* --- CONGELAR GRÁFICOS (Hacerlos no clickeables ni arrastrables) --- */
         [data-testid="stArrowVegaLiteChart"], [data-testid="stVegaLiteChart"], canvas.marks {
             pointer-events: none !important;
         }
@@ -144,7 +115,7 @@ def cargar_estilos():
 
 cargar_estilos()
 
-# --- CTO: LA ARMADURA DE REINTENTOS ---
+# --- ARMADURA DE REINTENTOS ---
 def reintentar_conexion(intentos=3, espera=2):
     def decorador(funcion):
         @wraps(funcion)
@@ -243,7 +214,6 @@ def leer_registros_alumno(alumno):
         else: df_alumno["Reps_Grafico"] = 0.0
     return df_alumno
 
-# --- LÓGICA DE CÁLCULO 1RM PROMEDIO ---
 def calcular_1rm_promedio(peso, reps):
     if reps == 1: return peso
     if reps == 0: return 0
@@ -315,7 +285,7 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
         df_final = pd.DataFrame(nuevas_filas)
 
     if len(df_old) > 20 and len(df_final) < 10:
-        st.error(f"🚨 ERROR DE SEGURIDAD CRÍTICO: La aplicación intentó borrar datos. Guardado cancelado.")
+        st.error(f"🚨 ERROR DE SEGURIDAD CRÍTICO: Guardado cancelado.")
         return 
 
     df_final = df_final.fillna("")
@@ -353,26 +323,6 @@ def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=Non
     sh.worksheet("Registros").append_row([fecha, usuario, ejercicio, peso, reps, rpe, notas])
 
 @reintentar_conexion() 
-def editar_un_registro_especifico(usuario, fecha_original, ejercicio_original, nuevo_peso, nuevas_reps, nueva_nota):
-    sh = conectar_google_sheet()
-    ws = sh.worksheet("Registros")
-    all_data = ws.get_all_records()
-    fila_idx = -1
-    for i, row in enumerate(all_data):
-        r_user = str(row.get("Usuario", "")).strip().lower()
-        r_date = str(row.get("Fecha", "")).strip()
-        r_ej = str(row.get("Ejercicio", "")).strip()
-        if r_user == usuario.strip().lower() and r_date == fecha_original and r_ej == ejercicio_original:
-            fila_idx = i + 2
-            break
-    if fila_idx != -1:
-        ws.update_cell(fila_idx, 4, nuevo_peso)
-        ws.update_cell(fila_idx, 5, nuevas_reps)
-        ws.update_cell(fila_idx, 7, nueva_nota)
-        return True
-    return False
-
-@reintentar_conexion() 
 def actualizar_registros_masivo(usuario, df_editado):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Registros")
@@ -387,7 +337,7 @@ def actualizar_registros_masivo(usuario, df_editado):
     df_otros = df_all[df_all["Usuario"].astype(str).str.lower() != usuario.lower()]
     df_nuevos = df_editado.copy()
     if "Fecha" in df_nuevos.columns:
-        df_nuevos["Fecha"] = pd.to_datetime(df_nuevos["Fecha"]).dt.strftime("%Y-%m-%d")
+        df_nuevos["Fecha"] = pd.to_datetime(df_nuevos["Fecha"], format='mixed', errors='ignore').dt.strftime("%Y-%m-%d")
     df_final = pd.concat([df_otros, df_nuevos], ignore_index=True).fillna("").sort_values("Fecha")
     ws.clear()
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
@@ -523,14 +473,12 @@ def render_tarjeta_individual(idx, row):
         with c_kg: st.text_input("Kg Realizados", value=val_kg, key=k_kg)
         with c_notas: st.text_area("Notas / Instrucciones", value=val_notas, key=k_notas, height=68)
 
-# --- 6. GESTIÓN DE LOGIN BLINDADA ---
+# --- 6. GESTIÓN DE LOGIN ---
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 
 if not st.session_state['logueado']:
-    # CTO: Primero buscamos si hay ticket en la URL, si no, buscamos la Cookie VIP.
     usuario_url = st.query_params.get("u", None)
     usuario_cookie = gestor_cookies.get(cookie="sello_vip_estudio")
-    
     usuario_a_validar = usuario_url if usuario_url else usuario_cookie
 
     if usuario_a_validar:
@@ -538,8 +486,6 @@ if not st.session_state['logueado']:
         if u_data is not None:
             st.session_state['logueado'] = True
             st.session_state['usuario_info'] = u_data
-            
-            # Si entramos con la Cookie, forzamos que la URL también tenga el nombre
             if str(u_data.get('Rol','')).lower() == 'alumno':
                 st.query_params["u"] = u_data['Usuario']
         else: 
@@ -558,15 +504,11 @@ if not st.session_state['logueado']:
                     if user is not None: 
                         st.session_state['logueado'] = True
                         st.session_state['usuario_info'] = user
-                        
-                        # CTO: ¡Aquí ponemos el Sello VIP! Caduca en 30 días.
                         fecha_expiracion = datetime.now() + timedelta(days=30)
                         gestor_cookies.set("sello_vip_estudio", user['Usuario'], expires_at=fecha_expiracion)
-
                         if str(user.get('Rol','')).lower() == 'alumno':
                             st.query_params["u"] = user['Usuario']
-                        
-                        time.sleep(0.5) # Pausa mínima para que el navegador guarde la galleta
+                        time.sleep(0.5) 
                         st.rerun()
                     else: st.error("❌ Error")
 else:
@@ -582,7 +524,6 @@ else:
         if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): 
             st.cache_data.clear(); st.rerun()
         if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
-            # CTO: Borramos el Sello VIP al cerrar sesión
             gestor_cookies.delete("sello_vip_estudio")
             st.session_state['logueado'] = False
             st.query_params.clear()
@@ -741,23 +682,43 @@ else:
                     st.rerun()
 
                 st.markdown("---")
+                
+                # --- CTO: REGISTRO RÁPIDO MEJORADO (Validaciones y Decimales) ---
                 with st.expander("📝 Registro Rápido (Guardar serie en historial)", expanded=False):
                     with st.form("registro_rapido"):
+                        st.markdown("⭐ **TODOS LOS CAMPOS SON OBLIGATORIOS**")
                         ejercicios_fuerza = r_hoy[r_hoy["Seccion"] == "Fuerza"]["Ejercicio"].unique()
                         if len(ejercicios_fuerza) == 0:
                             ej_sel = st.text_input("Ejercicio")
                         else:
                             c_ej, c_kg = st.columns([2, 1])
                             ej_sel = c_ej.selectbox("Ejercicio", ejercicios_fuerza)
-                            kg_in = c_kg.text_input("Kilos", placeholder="Ej: 50")
+                            kg_in = c_kg.text_input("Kilos", placeholder="Ej: 72.5 o 72,5")
+                        
                         c_reps, c_rpe = st.columns(2)
                         reps_in = c_reps.text_input("Reps", placeholder="Ej: 10")
+                        
+                        st.caption("🧠 **¿Qué es el RPE?** Es tu Percepción de Esfuerzo (del 1 al 10). \n* **RPE 10:** Fallo muscular, no podías hacer ni una repetición más.\n* **RPE 8:** Esfuerzo alto, te guardaste unas 2 repeticiones en el tanque.")
                         rpe_in = c_rpe.slider("RPE", 1, 10, 7)
-                        notas_in = st.text_area("Notas extra", height=80)
+                        
+                        notas_in = st.text_area("Notas extra", height=60)
+                        
                         if st.form_submit_button("GUARDAR EN HISTORIAL", use_container_width=True):
-                            guardar_registro(alias, ej_sel, kg_in, reps_in, rpe_in, notas_in)
-                            leer_registros_alumno.clear() 
-                            st.success("Guardado!"); time.sleep(1)
+                            if not ej_sel.strip() or not kg_in.strip() or not reps_in.strip():
+                                st.error("⚠️ Error: Ejercicio, Kilos y Reps son campos obligatorios.")
+                            else:
+                                try:
+                                    # Convertimos la coma en punto si el usuario lo tipeó mal
+                                    kg_limpio = float(kg_in.replace(",", "."))
+                                    reps_limpio = int(reps_in.strip())
+                                    
+                                    guardar_registro(alias, ej_sel, kg_limpio, reps_limpio, rpe_in, notas_in)
+                                    leer_registros_alumno.clear() 
+                                    st.success("✅ ¡Guardado con éxito!")
+                                    time.sleep(1)
+                                    st.rerun()
+                                except ValueError:
+                                    st.error("⚠️ Error: Los Kilos y Reps deben ser solo números (Ej: 72.5). No escribas letras.")
 
                 c_ok, c_fail = st.columns(2)
                 if c_ok.button("✅ TERMINÉ POR HOY", use_container_width=True):
@@ -799,66 +760,81 @@ else:
                     leer_sesiones_alumno.clear() 
                     time.sleep(1); st.rerun()
 
+        # --- CTO: NUEVA PESTAÑA DE BITÁCORA ---
         with t3:
             st.markdown("### 📝 Bitácora")
             
             df_r = leer_registros_alumno(alias)
-            ultimo_1rm_val = 0
             
             if not df_r.empty and "Peso_Grafico" in df_r.columns:
                 lista_ej = df_r["Ejercicio"].unique()
                 if len(lista_ej) > 0:
-                    ej_sel = st.selectbox("Selecciona Ejercicio:", lista_ej)
+                    ej_sel = st.selectbox("📊 Selecciona un Ejercicio para ver tu progreso:", lista_ej)
                     df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=True)
                     
                     if not df_plt.empty:
-                        st.caption(f"Historial de Cargas: {ej_sel}")
-                        
+                        # --- Gráfico por Fechas ---
                         df_chart = df_plt.copy()
-                        df_chart["Reps_Label"] = df_chart["Reps_Grafico"].astype(int).astype(str) + " reps"
+                        df_chart["Fecha_Str"] = df_chart["Fecha"].dt.strftime("%d/%m/%Y")
                         
-                        chart = alt.Chart(df_chart).mark_bar(color="#E63946").encode(
-                            x=alt.X('Reps_Label:O', sort=None, title="Repeticiones", axis=alt.Axis(labelAngle=0)),
-                            y=alt.Y('Peso_Grafico:Q', title="Kilos")
+                        chart = alt.Chart(df_chart).mark_bar(color="#E63946", opacity=0.9, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+                            x=alt.X('Fecha_Str:N', sort=None, title="Fecha del Entreno", axis=alt.Axis(labelAngle=-45)),
+                            y=alt.Y('Peso_Grafico:Q', title="Kilos Levantados"),
+                            tooltip=[
+                                alt.Tooltip('Fecha_Str:N', title="Fecha"), 
+                                alt.Tooltip('Peso_Grafico:Q', title="Kilos"), 
+                                alt.Tooltip('Reps_Grafico:Q', title="Reps"), 
+                                alt.Tooltip('Rpe:Q', title="RPE")
+                            ]
                         ).properties(height=300) 
                         
                         st.altair_chart(chart, use_container_width=True)
                         
-                        cols_view = ["Fecha", "Peso", "Repeticiones", "Rpe", "Notas"]
-                        for c in cols_view:
-                            if c not in df_plt.columns: df_plt[c] = "-"
-                        st.dataframe(df_plt[cols_view].sort_values("Fecha", ascending=False), use_container_width=True, hide_index=True)
-                        
-                        last_row = df_plt.iloc[-1]
-                        ultimo_1rm_val = calcular_1rm_promedio(last_row["Peso_Grafico"], last_row["Reps_Grafico"])
                     else:
                         st.info("Sin datos para este ejercicio.")
                 else:
                     st.info("No hay ejercicios registrados.")
+                
+                st.markdown("---")
+                
+                # --- Editor de Registros (El corrector) ---
+                st.markdown("#### ✏️ Corrector de Registros")
+                st.caption("¿Te equivocaste al anotar kilos o reps? Corrige o borra filas en esta tabla y presiona Guardar. Para borrar una fila, selecciónala y presiona Suprimir/Borrar.")
+                
+                cols_show = ["Fecha", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
+                for c in cols_show:
+                    if c not in df_r.columns: df_r[c] = ""
+                
+                # Mostramos todo su historial para que pueda corregir cualquier cosa
+                df_hist_editor = df_r[cols_show].sort_values("Fecha", ascending=False)
+                edited_hist_alu = st.data_editor(df_hist_editor, num_rows="dynamic", key=f"hist_edit_alu_{alias}", use_container_width=True)
+                
+                if st.button("💾 GUARDAR CORRECCIONES", use_container_width=True):
+                    df_a_guardar = edited_hist_alu.copy()
+                    df_a_guardar["Usuario"] = alias
+                    actualizar_registros_masivo(alias, df_a_guardar)
+                    leer_registros_alumno.clear()
+                    st.success("¡Tus correcciones han sido guardadas!")
+                    time.sleep(1)
+                    st.rerun()
             else:
                 st.info("Aún no tienes registros en tu bitácora.")
 
             st.markdown("---")
-            
-            st.markdown(f"<div class='sub-metric'>ESTIMACIÓN ACTUAL (Basado en tu último registro)</div>", unsafe_allow_html=True)
-            st.markdown(f"<div class='big-metric'>{int(ultimo_1rm_val)} kg</div>", unsafe_allow_html=True)
-            
-            st.markdown("---")
 
-            st.markdown("### 🧮 Calculadora")
+            # --- Calculadora Limpia y Ordenada ---
+            st.markdown("### 🧮 Calculadora de 1RM")
             with st.container(border=True):
                 c_peso, c_reps = st.columns(2)
-                p_in = c_peso.number_input("Peso (kg)", min_value=0.0, step=1.0, value=0.0)
-                r_in = c_reps.number_input("Repeticiones", min_value=1, max_value=30, step=1, value=5)
+                p_in = c_peso.number_input("Peso levantado (kg)", min_value=0.0, step=1.0, value=0.0)
+                r_in = c_reps.number_input("Repeticiones logradas", min_value=1, max_value=30, step=1, value=5)
             
             rm_calculo = 0
             if p_in > 0:
                 rm_calculo = calcular_1rm_promedio(p_in, r_in)
-            elif ultimo_1rm_val > 0:
-                rm_calculo = ultimo_1rm_val
             
             if rm_calculo > 0:
-                with st.expander("📊 Ver Tablas de RM y % de Fuerza", expanded=False):
+                with st.expander("📊 Ver Tablas de RM y % de Fuerza", expanded=True):
                     st.caption(f"TABLA DE FUERZA (Base: {int(rm_calculo)}kg)")
                     cols_grid = st.columns(4)
                     for i in range(1, 13):
@@ -895,5 +871,3 @@ else:
                         texto = f"**{porc}%** : {int(val_p)} kg"
                         if idx % 2 == 0: col_p1.info(texto)
                         else: col_p2.info(texto)
-
-
