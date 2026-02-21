@@ -217,7 +217,6 @@ def leer_registros_alumno(alumno):
 def calcular_1rm_promedio(peso, reps):
     if reps == 1: return peso
     if reps == 0: return 0
-    # Fórmulas
     brzycki = peso / (1.0278 - 0.0278 * reps)
     epley = peso * (1 + 0.0333 * reps)
     lander = (100 * peso) / (101.3 - 2.67123 * reps)
@@ -225,7 +224,6 @@ def calcular_1rm_promedio(peso, reps):
     mayhew = (100 * peso) / (52.2 + (41.9 * math.exp(-0.055 * reps)))
     oconner = peso * (1 + 0.025 * reps)
     wathen = (100 * peso) / (48.8 + (53.8 * math.exp(-0.075 * reps)))
-    # Promedio
     promedio = (brzycki + epley + lander + lombardi + mayhew + oconner + wathen) / 7
     return promedio
 
@@ -285,10 +283,7 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     else:
         df_final = pd.DataFrame(nuevas_filas)
 
-    # PROTOCOLO DE SEGURIDAD
-    filas_antes = len(df_old)
-    filas_despues = len(df_final)
-    if filas_antes > 20 and filas_despues < 10:
+    if len(df_old) > 20 and len(df_final) < 10:
         st.error(f"🚨 ERROR DE SEGURIDAD CRÍTICO: La aplicación intentó borrar datos. Guardado cancelado.")
         return 
 
@@ -462,7 +457,6 @@ def renderizar_bloque_seccion(titulo, df_seccion):
         items = list(grupo)
         if bloque != "SIN_BLOQUE":
             with st.container(border=True):
-                # --- HACK SILENCIOSO PARA EL BORDE ROJO ---
                 st.markdown("<div class='red-border-trigger'></div>", unsafe_allow_html=True)
                 for idx, row, _ in items:
                     render_tarjeta_individual(idx, row)
@@ -534,6 +528,7 @@ else:
         st.markdown(f"## {nombre.upper()}")
         st.caption(f"ROL: {rol.upper()}")
         st.divider()
+        # CTO: Aquí DEJAMOS el botón de pánico global por si el Administrador necesita resetear todo.
         if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): 
             st.cache_data.clear(); st.rerun()
         if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
@@ -547,6 +542,7 @@ else:
                 c1, c2, c3 = st.columns([3, 3, 1]) 
                 with c3: 
                     st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+                    # CTO: Este botón de recarga manual también lo dejamos igual.
                     if st.button("🔄", key="ref_admin"): st.cache_data.clear(); st.rerun()
                 us = obtener_todos_usuarios()
                 als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
@@ -588,7 +584,9 @@ else:
             with c_g:
                 if st.button("💾 GUARDAR RUTINA", type="primary", use_container_width=True):
                     guardar_rutina_actualizada(alu, dia, ed_c, ed_f, ed_ca)
-                    st.cache_data.clear(); st.success("Guardado."); time.sleep(1); st.rerun()
+                    # CTO: Cambio 1. Limpieza quirúrgica de la memoria de Rutinas.
+                    leer_rutina.clear() 
+                    st.success("Guardado."); time.sleep(1); st.rerun()
             with c_d:
                 if not rut.empty: 
                     st.download_button("📥 DESCARGAR WORD", generar_word(alu, rut), f"{alu}.docx", use_container_width=True)
@@ -632,7 +630,9 @@ else:
                         edited_hist = st.data_editor(df_r[cols_show], num_rows="dynamic", key=f"hist_edit_{alu_s}")
                         if st.button("Actualizar Historial"):
                             actualizar_registros_masivo(alu_s, edited_hist)
-                            st.cache_data.clear(); st.rerun()
+                            # CTO: Cambio 2. Limpieza quirúrgica de la memoria de Registros.
+                            leer_registros_alumno.clear() 
+                            st.rerun()
                      else: st.info("Sin registros.")
                 if not df_r.empty and "Peso_Grafico" in df_r.columns:
                     lista_ejercicios = df_r["Ejercicio"].unique()
@@ -683,7 +683,8 @@ else:
                 
                 if st.button("💾 GUARDAR CAMBIOS EN LA RUTINA", type="primary", use_container_width=True):
                     guardar_desde_tarjetas(alias, d_hoy, r_hoy, st.session_state)
-                    st.cache_data.clear()
+                    # CTO: Cambio 3. Limpieza de memoria de Rutinas.
+                    leer_rutina.clear()
                     st.toast("✅ Notas y Kilos guardados!")
                     time.sleep(1)
                     st.rerun()
@@ -704,13 +705,20 @@ else:
                         notas_in = st.text_area("Notas extra", height=80)
                         if st.form_submit_button("GUARDAR EN HISTORIAL", use_container_width=True):
                             guardar_registro(alias, ej_sel, kg_in, reps_in, rpe_in, notas_in)
-                            st.cache_data.clear(); st.success("Guardado!"); time.sleep(1)
+                            # CTO: Cambio 4. Limpieza de memoria de Registros.
+                            leer_registros_alumno.clear() 
+                            st.success("Guardado!"); time.sleep(1)
 
                 c_ok, c_fail = st.columns(2)
                 if c_ok.button("✅ TERMINÉ POR HOY", use_container_width=True):
-                    guardar_estado_sesion(alias, "Completado"); st.cache_data.clear(); st.balloons()
+                    guardar_estado_sesion(alias, "Completado")
+                    # CTO: Cambio 5. Limpieza de memoria de Sesiones (Asistencia).
+                    leer_sesiones_alumno.clear() 
+                    st.balloons()
                 if c_fail.button("⚠️ INCOMPLETO", use_container_width=True):
-                    guardar_estado_sesion(alias, "Incompleto"); st.cache_data.clear()
+                    guardar_estado_sesion(alias, "Incompleto")
+                    # CTO: Cambio 6.
+                    leer_sesiones_alumno.clear()
             else: st.info("No tienes rutina asignada aún.")
             
         with t2:
@@ -740,7 +748,9 @@ else:
                 if col_b_pas.button("Marcar Completado", use_container_width=True):
                     guardar_estado_sesion(alias, "Completado", fecha_pasada)
                     st.success(f"Entreno del {fecha_pasada.strftime('%d/%m')} guardado.")
-                    st.cache_data.clear(); time.sleep(1); st.rerun()
+                    # CTO: Cambio 7. Limpieza de memoria de Sesiones (Asistencia).
+                    leer_sesiones_alumno.clear() 
+                    time.sleep(1); st.rerun()
 
         with t3:
             st.markdown("### 📝 Bitácora")
@@ -757,7 +767,6 @@ else:
                     if not df_plt.empty:
                         st.caption(f"Historial de Cargas: {ej_sel}")
                         
-                        # --- GRÁFICO 100% ESTÁTICO Y CONGELADO ---
                         df_chart = df_plt.copy()
                         df_chart["Reps_Label"] = df_chart["Reps_Grafico"].astype(int).astype(str) + " reps"
                         
@@ -802,7 +811,6 @@ else:
                 rm_calculo = ultimo_1rm_val
             
             if rm_calculo > 0:
-                # --- TABLAS DENTRO DEL DESPLEGABLE ---
                 with st.expander("📊 Ver Tablas de RM y % de Fuerza", expanded=False):
                     st.caption(f"TABLA DE FUERZA (Base: {int(rm_calculo)}kg)")
                     cols_grid = st.columns(4)
@@ -823,7 +831,6 @@ else:
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.markdown("#### % Cargas de Trabajo")
                     
-                    # --- CALCULADORA DE PORCENTAJE PERSONALIZADO ---
                     with st.container(border=True):
                         st.caption("🎯 **Calculadora de % Exacto**")
                         col_calc1, col_calc2 = st.columns([1, 2])
@@ -833,7 +840,6 @@ else:
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     
-                    # --- TABLA DE PORCENTAJES FIJOS ---
                     col_p1, col_p2 = st.columns(2)
                     porcentajes = [125, 120, 115, 110, 105, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30]
                     
