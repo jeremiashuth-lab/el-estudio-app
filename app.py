@@ -22,11 +22,19 @@ st.set_page_config(
     page_title="El Estudio", 
     page_icon="🔥", 
     layout="wide", 
-    initial_sidebar_state="collapsed" # CTO: Lo colapsamos por defecto
+    initial_sidebar_state="collapsed" 
 )
 
 # --- INICIALIZAR EL SELLO VIP (COOKIES) ---
 gestor_cookies = stx.CookieManager()
+
+# --- CTO: FUNCIÓN BLINDADA PARA CERRAR SESIÓN ---
+def cerrar_sesion_seguro():
+    gestor_cookies.delete("sello_vip_estudio") # 1. Mandamos la orden de borrar al celular
+    st.session_state['logueado'] = False # 2. Apagamos la sesión actual
+    st.session_state['forzar_salida'] = True # 3. ¡EL POST-IT! Le decimos a la app que ignore la galleta al reiniciar
+    st.query_params.clear() # 4. Limpiamos la URL
+    st.rerun() # 5. Reiniciamos
 
 # --- 2. ESTILOS CSS ---
 def cargar_estilos():
@@ -477,9 +485,14 @@ def render_tarjeta_individual(idx, row):
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 
 if not st.session_state['logueado']:
-    usuario_url = st.query_params.get("u", None)
-    usuario_cookie = gestor_cookies.get(cookie="sello_vip_estudio")
-    usuario_a_validar = usuario_url if usuario_url else usuario_cookie
+    # CTO: Leemos el POST-IT. Si forzamos la salida, ignoramos todo e impedimos el reingreso accidental.
+    if st.session_state.get('forzar_salida', False):
+        usuario_a_validar = None
+        st.session_state['forzar_salida'] = False # Apagamos la alarma para el siguiente inicio de sesión
+    else:
+        usuario_url = st.query_params.get("u", None)
+        usuario_cookie = gestor_cookies.get(cookie="sello_vip_estudio")
+        usuario_a_validar = usuario_url if usuario_url else usuario_cookie
 
     if usuario_a_validar:
         u_data = recuperar_usuario_por_nombre(usuario_a_validar)
@@ -517,10 +530,19 @@ else:
     nombre = str(datos.get('Nombre', 'Usuario')).strip()
     alias = str(datos.get('Usuario', '')).strip()
 
+    # --- MENÚ LATERAL OCULTO (Solo visible si el usuario lo despliega) ---
+    with st.sidebar:
+        st.markdown(f"## {nombre.upper()}")
+        st.caption(f"ROL: {rol.upper()}")
+        st.divider()
+        if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): 
+            st.cache_data.clear(); st.rerun()
+        if st.button("🚪 CERRAR SESIÓN", use_container_width=True, key="btn_logout_side"):
+            cerrar_sesion_seguro()
+
     # --- CTO: PANEL DE ADMINISTRADOR ---
     if rol == "admin":
         st.title("🎛️ PANEL DE CONTROL")
-        # CTO: Agregamos la pestaña de Perfil al final
         tab1, tab2, tab3 = st.tabs(["📝 DISEÑO DE RUTINAS", "📊 ESTADÍSTICAS", "⚙️ PERFIL"])
         
         with tab1:
@@ -649,7 +671,6 @@ else:
                             df_plt['1RM'] = df_plt['Peso_Grafico'] * (1 + (df_plt['Reps_Grafico'] / 30))
                             st.bar_chart(df_plt.set_index("Fecha")["1RM"], color="#E63946")
                             
-        # --- CTO: NUEVA PESTAÑA PERFIL ADMIN ---
         with tab3:
             st.markdown(f"### 👤 Perfil: {nombre.upper()}")
             st.caption("Administrador Principal")
@@ -663,18 +684,13 @@ else:
                 st.rerun()
                 
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
-                gestor_cookies.delete("sello_vip_estudio")
-                st.session_state['logueado'] = False
-                st.query_params.clear()
-                time.sleep(0.5)
-                st.rerun()
+            if st.button("🚪 CERRAR SESIÓN", use_container_width=True, key="btn_logout_admin"):
+                cerrar_sesion_seguro()
 
     else:
         # --- VISTA ALUMNO ---
         st.title(f"RUTINA DE {nombre.upper()}")
         
-        # CTO: Agregamos la pestaña de Perfil al final
         t1, t2, t3, t4 = st.tabs(["💪 ENTRENAR", "📅 ASISTENCIA", "📝 BITÁCORA", "⚙️ PERFIL"])
         
         with t1:
@@ -921,7 +937,6 @@ else:
                         if idx % 2 == 0: col_p1.info(texto)
                         else: col_p2.info(texto)
                         
-        # --- CTO: NUEVA PESTAÑA PERFIL ALUMNO ---
         with t4:
             st.markdown(f"### 👤 Perfil: {nombre}")
             st.caption(f"Usuario activo: {alias}")
@@ -929,9 +944,5 @@ else:
             
             st.info("💡 Desde aquí puedes cerrar tu sesión de forma segura si compartes este dispositivo o deseas ingresar con otra cuenta.")
             
-            if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
-                gestor_cookies.delete("sello_vip_estudio")
-                st.session_state['logueado'] = False
-                st.query_params.clear()
-                time.sleep(0.5)
-                st.rerun()
+            if st.button("🚪 CERRAR SESIÓN", use_container_width=True, key="btn_logout_alu"):
+                cerrar_sesion_seguro()
