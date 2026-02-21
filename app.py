@@ -25,7 +25,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CTO: INICIALIZAR EL SELLO VIP (COOKIES) ---
+# --- INICIALIZAR EL SELLO VIP (COOKIES) ---
 gestor_cookies = stx.CookieManager()
 
 # --- 2. ESTILOS CSS ---
@@ -683,7 +683,6 @@ else:
 
                 st.markdown("---")
                 
-                # --- CTO: REGISTRO RÁPIDO MEJORADO (Validaciones y Decimales) ---
                 with st.expander("📝 Registro Rápido (Guardar serie en historial)", expanded=False):
                     with st.form("registro_rapido"):
                         st.markdown("⭐ **TODOS LOS CAMPOS SON OBLIGATORIOS**")
@@ -708,7 +707,6 @@ else:
                                 st.error("⚠️ Error: Ejercicio, Kilos y Reps son campos obligatorios.")
                             else:
                                 try:
-                                    # Convertimos la coma en punto si el usuario lo tipeó mal
                                     kg_limpio = float(kg_in.replace(",", "."))
                                     reps_limpio = int(reps_in.strip())
                                     
@@ -760,7 +758,7 @@ else:
                     leer_sesiones_alumno.clear() 
                     time.sleep(1); st.rerun()
 
-        # --- CTO: NUEVA PESTAÑA DE BITÁCORA ---
+        # --- CTO: PESTAÑA DE BITÁCORA (Filtros, Gráficos y UX) ---
         with t3:
             st.markdown("### 📝 Bitácora")
             
@@ -769,16 +767,27 @@ else:
             if not df_r.empty and "Peso_Grafico" in df_r.columns:
                 lista_ej = df_r["Ejercicio"].unique()
                 if len(lista_ej) > 0:
-                    ej_sel = st.selectbox("📊 Selecciona un Ejercicio para ver tu progreso:", lista_ej)
-                    df_plt = df_r[df_r["Ejercicio"] == ej_sel].sort_values("Fecha", ascending=True)
+                    ej_sel_bitacora = st.selectbox("📊 Selecciona un Ejercicio para ver tu progreso:", lista_ej, key="sel_bitacora")
+                    
+                    # Filtramos TODO (Gráfico y Tabla) solo para este ejercicio
+                    df_plt = df_r[df_r["Ejercicio"] == ej_sel_bitacora].sort_values("Fecha", ascending=True).copy()
                     
                     if not df_plt.empty:
-                        # --- Gráfico por Fechas ---
-                        df_chart = df_plt.copy()
-                        df_chart["Fecha_Str"] = df_chart["Fecha"].dt.strftime("%d/%m/%Y")
+                        # --- CTO: Gráfico Inteligente (Barras + Carteles de Reps) ---
+                        df_chart = df_plt.copy().reset_index(drop=True)
+                        df_chart["Fecha_Str"] = df_chart["Fecha"].dt.strftime("%d/%m")
                         
-                        chart = alt.Chart(df_chart).mark_bar(color="#E63946", opacity=0.9, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
-                            x=alt.X('Fecha_Str:N', sort=None, title="Fecha del Entreno", axis=alt.Axis(labelAngle=-45)),
+                        # Si el alumno hace 3 series en un mismo día, separamos las etiquetas
+                        df_chart['Set_Num'] = df_chart.groupby('Fecha_Str').cumcount() + 1
+                        df_chart['Eje_X'] = df_chart['Fecha_Str'] + " (S" + df_chart['Set_Num'].astype(str) + ")"
+                        df_chart['Reps_Cartel'] = df_chart['Reps_Grafico'].astype(int).astype(str) + "r"
+                        
+                        base = alt.Chart(df_chart).encode(
+                            x=alt.X('Eje_X:N', sort=None, title="Fecha y Serie", axis=alt.Axis(labelAngle=-45))
+                        )
+                        
+                        # Las barras rojas (Kilos)
+                        barras = base.mark_bar(color="#E63946", opacity=0.9, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
                             y=alt.Y('Peso_Grafico:Q', title="Kilos Levantados"),
                             tooltip=[
                                 alt.Tooltip('Fecha_Str:N', title="Fecha"), 
@@ -786,8 +795,20 @@ else:
                                 alt.Tooltip('Reps_Grafico:Q', title="Reps"), 
                                 alt.Tooltip('Rpe:Q', title="RPE")
                             ]
-                        ).properties(height=300) 
+                        )
                         
+                        # Los carteles blancos arriba de las barras (Repeticiones)
+                        textos = base.mark_text(
+                            dy=-10, # Esto sube el texto un poco por encima de la barra
+                            color="white",
+                            fontWeight="bold"
+                        ).encode(
+                            y=alt.Y('Peso_Grafico:Q'),
+                            text=alt.Text('Reps_Cartel:N')
+                        )
+                        
+                        # Combinamos barras y texto
+                        chart = (barras + textos).properties(height=320) 
                         st.altair_chart(chart, use_container_width=True)
                         
                     else:
@@ -797,24 +818,27 @@ else:
                 
                 st.markdown("---")
                 
-                # --- Editor de Registros (El corrector) ---
-                st.markdown("#### ✏️ Corrector de Registros")
-                st.caption("¿Te equivocaste al anotar kilos o reps? Corrige o borra filas en esta tabla y presiona Guardar. Para borrar una fila, selecciónala y presiona Suprimir/Borrar.")
+                # --- CTO: El Archivero por Cajones (Corrector filtrado) ---
+                st.markdown(f"#### ✏️ Corrector de Registros: {ej_sel_bitacora}")
+                st.caption("Corrige o borra filas y presiona Guardar. Para borrar una fila, selecciónala y presiona Suprimir/Borrar.")
                 
                 cols_show = ["Fecha", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
                 for c in cols_show:
-                    if c not in df_r.columns: df_r[c] = ""
+                    if c not in df_plt.columns: df_plt[c] = ""
                 
-                # Mostramos todo su historial para que pueda corregir cualquier cosa
-                df_hist_editor = df_r[cols_show].sort_values("Fecha", ascending=False)
+                # Mostramos SOLO el historial del ejercicio seleccionado
+                df_hist_editor = df_plt[cols_show].sort_values("Fecha", ascending=False)
                 edited_hist_alu = st.data_editor(df_hist_editor, num_rows="dynamic", key=f"hist_edit_alu_{alias}", use_container_width=True)
                 
                 if st.button("💾 GUARDAR CORRECCIONES", use_container_width=True):
-                    df_a_guardar = edited_hist_alu.copy()
+                    # CTO: Unimos las correcciones nuevas con el resto de los ejercicios que estaban ocultos para no borrarlos
+                    df_otros_ejercicios = df_r[df_r["Ejercicio"] != ej_sel_bitacora]
+                    df_a_guardar = pd.concat([df_otros_ejercicios, edited_hist_alu], ignore_index=True)
                     df_a_guardar["Usuario"] = alias
+                    
                     actualizar_registros_masivo(alias, df_a_guardar)
                     leer_registros_alumno.clear()
-                    st.success("¡Tus correcciones han sido guardadas!")
+                    st.success("¡Tus correcciones han sido guardadas de forma segura!")
                     time.sleep(1)
                     st.rerun()
             else:
