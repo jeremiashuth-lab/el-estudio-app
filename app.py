@@ -30,11 +30,11 @@ gestor_cookies = stx.CookieManager()
 
 # --- CTO: FUNCIÓN BLINDADA PARA CERRAR SESIÓN ---
 def cerrar_sesion_seguro():
-    gestor_cookies.delete("sello_vip_estudio") # 1. Mandamos la orden de borrar al celular
-    st.session_state['logueado'] = False # 2. Apagamos la sesión actual
-    st.session_state['forzar_salida'] = True # 3. ¡EL POST-IT! Le decimos a la app que ignore la galleta al reiniciar
-    st.query_params.clear() # 4. Limpiamos la URL
-    st.rerun() # 5. Reiniciamos
+    gestor_cookies.delete("sello_vip_estudio") 
+    st.session_state['logueado'] = False 
+    st.session_state['esperando_login_manual'] = True # CTO: ¡PONEMOS EL CANDADO DE CUARENTENA!
+    st.query_params.clear() 
+    st.rerun() 
 
 # --- 2. ESTILOS CSS ---
 def cargar_estilos():
@@ -483,12 +483,12 @@ def render_tarjeta_individual(idx, row):
 
 # --- 6. GESTIÓN DE LOGIN ---
 if 'logueado' not in st.session_state: st.session_state['logueado'] = False
+if 'esperando_login_manual' not in st.session_state: st.session_state['esperando_login_manual'] = False
 
 if not st.session_state['logueado']:
-    # CTO: Leemos el POST-IT. Si forzamos la salida, ignoramos todo e impedimos el reingreso accidental.
-    if st.session_state.get('forzar_salida', False):
+    # CTO: Si el candado está puesto, el sistema se vuelve ciego a las Cookies fantasma.
+    if st.session_state.get('esperando_login_manual', False):
         usuario_a_validar = None
-        st.session_state['forzar_salida'] = False # Apagamos la alarma para el siguiente inicio de sesión
     else:
         usuario_url = st.query_params.get("u", None)
         usuario_cookie = gestor_cookies.get(cookie="sello_vip_estudio")
@@ -517,28 +517,21 @@ if not st.session_state['logueado']:
                     if user is not None: 
                         st.session_state['logueado'] = True
                         st.session_state['usuario_info'] = user
+                        st.session_state['esperando_login_manual'] = False # CTO: ¡CLAVE CORRECTA, QUITAMOS EL CANDADO!
+                        
                         fecha_expiracion = datetime.now() + timedelta(days=30)
                         gestor_cookies.set("sello_vip_estudio", user['Usuario'], expires_at=fecha_expiracion)
+                        
                         if str(user.get('Rol','')).lower() == 'alumno':
                             st.query_params["u"] = user['Usuario']
                         time.sleep(0.5) 
                         st.rerun()
-                    else: st.error("❌ Error")
+                    else: st.error("❌ Error de credenciales")
 else:
     datos = st.session_state['usuario_info']
     rol = str(datos.get('Rol', 'alumno')).strip()
     nombre = str(datos.get('Nombre', 'Usuario')).strip()
     alias = str(datos.get('Usuario', '')).strip()
-
-    # --- MENÚ LATERAL OCULTO (Solo visible si el usuario lo despliega) ---
-    with st.sidebar:
-        st.markdown(f"## {nombre.upper()}")
-        st.caption(f"ROL: {rol.upper()}")
-        st.divider()
-        if st.button("🔴 LIMPIAR CACHÉ", use_container_width=True): 
-            st.cache_data.clear(); st.rerun()
-        if st.button("🚪 CERRAR SESIÓN", use_container_width=True, key="btn_logout_side"):
-            cerrar_sesion_seguro()
 
     # --- CTO: PANEL DE ADMINISTRADOR ---
     if rol == "admin":
