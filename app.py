@@ -28,7 +28,7 @@ st.set_page_config(
 
 # --- CTO: INICIALIZAR EL SILLO VIP (COOKIES) ---
 # Configuramos la memoria del navegador para que dure 30 días
-@st.cache_resource(experimental_allow_widgets=True)
+@st.cache_resource
 def obtener_gestor_cookies():
     return stx.CookieManager()
 
@@ -898,3 +898,4 @@ else:
                         texto = f"**{porc}%** : {int(val_p)} kg"
                         if idx % 2 == 0: col_p1.info(texto)
                         else: col_p2.info(texto)
+
