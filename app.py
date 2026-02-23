@@ -32,7 +32,7 @@ gestor_cookies = stx.CookieManager()
 def cerrar_sesion_seguro():
     gestor_cookies.delete("sello_vip_estudio") 
     st.session_state['logueado'] = False 
-    st.session_state['esperando_login_manual'] = True # CTO: ¡PONEMOS EL CANDADO DE CUARENTENA!
+    st.session_state['esperando_login_manual'] = True 
     st.query_params.clear() 
     st.rerun() 
 
@@ -486,7 +486,6 @@ if 'logueado' not in st.session_state: st.session_state['logueado'] = False
 if 'esperando_login_manual' not in st.session_state: st.session_state['esperando_login_manual'] = False
 
 if not st.session_state['logueado']:
-    # CTO: Si el candado está puesto, el sistema se vuelve ciego a las Cookies fantasma.
     if st.session_state.get('esperando_login_manual', False):
         usuario_a_validar = None
     else:
@@ -517,7 +516,7 @@ if not st.session_state['logueado']:
                     if user is not None: 
                         st.session_state['logueado'] = True
                         st.session_state['usuario_info'] = user
-                        st.session_state['esperando_login_manual'] = False # CTO: ¡CLAVE CORRECTA, QUITAMOS EL CANDADO!
+                        st.session_state['esperando_login_manual'] = False
                         
                         fecha_expiracion = datetime.now() + timedelta(days=30)
                         gestor_cookies.set("sello_vip_estudio", user['Usuario'], expires_at=fecha_expiracion)
@@ -580,16 +579,12 @@ else:
             cfg_fuerza["Orden"] = st.column_config.TextColumn("Ord.", width="small")
             cfg_fuerza["Kg"] = st.column_config.TextColumn("Kg", width="small")
             
-            def trigger_guardado():
-                guardar_rutina_actualizada(alu, dia, st.session_state[f"c_{alu}_{dia}"], st.session_state[f"f_{alu}_{dia}"], st.session_state[f"ca_{alu}_{dia}"])
-                leer_rutina.clear() 
-                st.success("✅ Guardado Exitoso."); time.sleep(1); st.rerun()
-
             st.markdown("---")
             
             c_g_top, c_d_top = st.columns([1, 1])
             with c_g_top:
-                st.button("💾 GUARDAR RUTINA RÁPIDO", type="primary", use_container_width=True, on_click=trigger_guardado, key="btn_guardar_top")
+                # CTO: Le quitamos la función "on_click" problemática
+                guardado_arriba = st.button("💾 GUARDAR RUTINA RÁPIDO", type="primary", use_container_width=True, key="btn_guardar_top")
             with c_d_top:
                 if not rut.empty: 
                     st.download_button("📥 DESCARGAR WORD", generar_word(alu, rut), f"{alu}.docx", use_container_width=True, key="btn_word_top")
@@ -598,20 +593,29 @@ else:
                 st.info("💡 **Tip CTO:** Las columnas están compactadas para que entren mejor en tu celular. No olvides presionar Guardar.")
                 
                 st.caption("🔥 CALENTAMIENTO")
-                st.data_editor(d_cal, num_rows="dynamic", use_container_width=True, key=f"c_{alu}_{dia}", column_config=cfg_comun, hide_index=True)
+                # CTO: Guardamos directamente las tablas completas (DataFrames) en estas variables
+                ed_c = st.data_editor(d_cal, num_rows="dynamic", use_container_width=True, key=f"c_{alu}_{dia}", column_config=cfg_comun, hide_index=True)
                 
                 st.caption("🏋️‍♂️ FUERZA")
-                st.data_editor(d_fue, num_rows="dynamic", use_container_width=True, height=400, key=f"f_{alu}_{dia}", column_config=cfg_fuerza, hide_index=True)
+                ed_f = st.data_editor(d_fue, num_rows="dynamic", use_container_width=True, height=400, key=f"f_{alu}_{dia}", column_config=cfg_fuerza, hide_index=True)
                 
                 st.caption("🏃‍♂️ CARDIO")
-                st.data_editor(d_car, num_rows="dynamic", use_container_width=True, key=f"ca_{alu}_{dia}", column_config=cfg_comun, hide_index=True)
+                ed_ca = st.data_editor(d_car, num_rows="dynamic", use_container_width=True, key=f"ca_{alu}_{dia}", column_config=cfg_comun, hide_index=True)
             
             c_g_bot, c_d_bot = st.columns([1, 1])
             with c_g_bot:
-                st.button("💾 GUARDAR RUTINA", type="primary", use_container_width=True, on_click=trigger_guardado, key="btn_guardar_bot")
+                guardado_abajo = st.button("💾 GUARDAR RUTINA", type="primary", use_container_width=True, key="btn_guardar_bot")
             with c_d_bot:
                 if not rut.empty: 
                     st.download_button("📥 DESCARGAR WORD", generar_word(alu, rut), f"{alu}.docx", use_container_width=True, key="btn_word_bot")
+
+            # CTO: Evaluamos si tocaste alguno de los dos botones justo aquí al final
+            if guardado_arriba or guardado_abajo:
+                guardar_rutina_actualizada(alu, dia, ed_c, ed_f, ed_ca)
+                leer_rutina.clear() 
+                st.success("✅ Guardado Exitoso.")
+                time.sleep(1)
+                st.rerun()
 
         with tab2:
             us = obtener_todos_usuarios()
