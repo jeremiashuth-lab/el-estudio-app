@@ -156,14 +156,18 @@ def conectar_google_sheet():
 def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
 
-# --- 4. FUNCIONES DE LECTURA ---
+# --- 4. FUNCIONES DE LECTURA (AHORA CON ESCOBA DIGITAL) ---
 @st.cache_data(ttl=600)
 @reintentar_conexion() 
 def obtener_todos_usuarios():
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
     if df.empty: return df
-    df.columns = [c.strip().capitalize() for c in df.columns]
+    df.columns = [str(c).strip().capitalize() for c in df.columns]
+    # CTO FIX: Barredora de columnas duplicadas y vacías
+    df = df.loc[:, ~df.columns.duplicated()]
+    if "" in df.columns: df = df.drop(columns=[""])
+    
     if "Rol" in df.columns: df["Rol"] = df["Rol"].astype(str).str.strip().str.lower()
     if "Usuario" in df.columns: df["Usuario"] = df["Usuario"].astype(str).str.strip()
     return df
@@ -174,7 +178,11 @@ def leer_rutina(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Rutinas").get_all_records())
     if df.empty: return df
-    df.columns = [c.strip().capitalize() for c in df.columns]
+    df.columns = [str(c).strip().capitalize() for c in df.columns]
+    # CTO FIX: Barredora
+    df = df.loc[:, ~df.columns.duplicated()]
+    if "" in df.columns: df = df.drop(columns=[""])
+    
     df["Alumno_Norm"] = df["Alumno"].astype(str).str.strip().str.lower()
     alumno_norm = alumno.strip().lower()
     return df[df["Alumno_Norm"] == alumno_norm].drop(columns=["Alumno_Norm"])
@@ -185,7 +193,11 @@ def leer_sesiones_alumno(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Sesiones").get_all_records())
     if df.empty: return df
-    df.columns = [c.strip().capitalize() for c in df.columns]
+    df.columns = [str(c).strip().capitalize() for c in df.columns]
+    # CTO FIX: Barredora
+    df = df.loc[:, ~df.columns.duplicated()]
+    if "" in df.columns: df = df.drop(columns=[""])
+    
     if "Usuario" not in df.columns: return pd.DataFrame()
     df["Usuario_Norm"] = df["Usuario"].astype(str).str.strip().str.lower()
     alumno_norm = alumno.strip().lower()
@@ -200,11 +212,16 @@ def leer_registros_alumno(alumno):
     sh = conectar_google_sheet()
     df = pd.DataFrame(sh.worksheet("Registros").get_all_records())
     if df.empty: return df
-    col_map = {c: c.strip().capitalize() for c in df.columns}
+    col_map = {c: str(c).strip().capitalize() for c in df.columns}
     for k, v in col_map.items():
         if v.lower() in ['user', 'alumno']: col_map[k] = 'Usuario'
         if v.lower() in ['date', 'day']: col_map[k] = 'Fecha'
     df = df.rename(columns=col_map)
+    
+    # CTO FIX: Barredora profunda para proteger los gráficos
+    df = df.loc[:, ~df.columns.duplicated()]
+    if "" in df.columns: df = df.drop(columns=[""])
+    
     if "Usuario" not in df.columns: return pd.DataFrame()
     df["Usuario_Norm"] = df["Usuario"].astype(str).str.strip().str.lower()
     alumno_norm = alumno.strip().lower()
@@ -285,7 +302,9 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     df_old = pd.DataFrame(all_data)
     
     if not df_old.empty:
-        df_old.columns = [c.strip().capitalize() for c in df_old.columns]
+        df_old.columns = [str(c).strip().capitalize() for c in df_old.columns]
+        df_old = df_old.loc[:, ~df_old.columns.duplicated()]
+        if "" in df_old.columns: df_old = df_old.drop(columns=[""])
         mask = ~((df_old["Alumno"].astype(str).str.lower() == alumno.lower()) & (df_old["Dia"].astype(str) == dia))
         df_clean = df_old[mask]
         df_final = pd.concat([df_clean, pd.DataFrame(nuevas_filas)], ignore_index=True)
@@ -337,7 +356,12 @@ def actualizar_registros_masivo(usuario, df_editado):
     all_data = ws.get_all_records()
     df_all = pd.DataFrame(all_data)
     if df_all.empty: return
-    df_all.columns = [c.strip().capitalize() for c in df_all.columns]
+    df_all.columns = [str(c).strip().capitalize() for c in df_all.columns]
+    
+    # CTO FIX: Barredora antes de guardar
+    df_all = df_all.loc[:, ~df_all.columns.duplicated()]
+    if "" in df_all.columns: df_all = df_all.drop(columns=[""])
+    
     col_map = {c: c for c in df_all.columns}
     for c in df_all.columns:
         if c.lower() in ['user', 'alumno']: col_map[c] = 'Usuario'
@@ -532,7 +556,6 @@ else:
     nombre = str(datos.get('Nombre', 'Usuario')).strip()
     alias = str(datos.get('Usuario', '')).strip()
 
-    # --- CTO: PANEL DE ADMINISTRADOR ---
     if rol == "admin":
         st.title("🎛️ PANEL DE CONTROL")
         tab1, tab2, tab3 = st.tabs(["📝 DISEÑO DE RUTINAS", "📊 ESTADÍSTICAS", "⚙️ PERFIL"])
@@ -583,7 +606,6 @@ else:
             
             c_g_top, c_d_top = st.columns([1, 1])
             with c_g_top:
-                # CTO: Le quitamos la función "on_click" problemática
                 guardado_arriba = st.button("💾 GUARDAR RUTINA RÁPIDO", type="primary", use_container_width=True, key="btn_guardar_top")
             with c_d_top:
                 if not rut.empty: 
@@ -593,7 +615,6 @@ else:
                 st.info("💡 **Tip CTO:** Las columnas están compactadas para que entren mejor en tu celular. No olvides presionar Guardar.")
                 
                 st.caption("🔥 CALENTAMIENTO")
-                # CTO: Guardamos directamente las tablas completas (DataFrames) en estas variables
                 ed_c = st.data_editor(d_cal, num_rows="dynamic", use_container_width=True, key=f"c_{alu}_{dia}", column_config=cfg_comun, hide_index=True)
                 
                 st.caption("🏋️‍♂️ FUERZA")
@@ -609,7 +630,6 @@ else:
                 if not rut.empty: 
                     st.download_button("📥 DESCARGAR WORD", generar_word(alu, rut), f"{alu}.docx", use_container_width=True, key="btn_word_bot")
 
-            # CTO: Evaluamos si tocaste alguno de los dos botones justo aquí al final
             if guardado_arriba or guardado_abajo:
                 guardar_rutina_actualizada(alu, dia, ed_c, ed_f, ed_ca)
                 leer_rutina.clear() 
@@ -685,7 +705,6 @@ else:
                 cerrar_sesion_seguro()
 
     else:
-        # --- VISTA ALUMNO ---
         st.title(f"RUTINA DE {nombre.upper()}")
         
         t1, t2, t3, t4 = st.tabs(["💪 ENTRENAR", "📅 ASISTENCIA", "📝 BITÁCORA", "⚙️ PERFIL"])
@@ -873,6 +892,12 @@ else:
                 if st.button("💾 GUARDAR CORRECCIONES", use_container_width=True):
                     df_otros_ejercicios = df_r[df_r["Ejercicio"] != ej_sel_bitacora]
                     df_a_guardar = pd.concat([df_otros_ejercicios, edited_hist_alu], ignore_index=True)
+                    
+                    # CTO FIX: Solo guardamos las columnas oficiales para no ensuciar la base de datos
+                    cols_oficiales = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
+                    for c in cols_oficiales:
+                        if c not in df_a_guardar.columns: df_a_guardar[c] = ""
+                    df_a_guardar = df_a_guardar[cols_oficiales]
                     df_a_guardar["Usuario"] = alias
                     
                     actualizar_registros_masivo(alias, df_a_guardar)
