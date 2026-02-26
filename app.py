@@ -28,7 +28,6 @@ st.set_page_config(
 # --- INICIALIZAR EL SELLO VIP (COOKIES) ---
 gestor_cookies = stx.CookieManager()
 
-# --- CTO: FUNCIÓN BLINDADA PARA CERRAR SESIÓN ---
 def cerrar_sesion_seguro():
     gestor_cookies.delete("sello_vip_estudio") 
     st.session_state['logueado'] = False 
@@ -156,7 +155,7 @@ def conectar_google_sheet():
 def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', str(s))]
 
-# --- 4. FUNCIONES DE LECTURA (AHORA CON ESCOBA DIGITAL) ---
+# --- 4. FUNCIONES DE LECTURA ---
 @st.cache_data(ttl=600)
 @reintentar_conexion() 
 def obtener_todos_usuarios():
@@ -164,7 +163,6 @@ def obtener_todos_usuarios():
     df = pd.DataFrame(sh.worksheet("Usuarios").get_all_records())
     if df.empty: return df
     df.columns = [str(c).strip().capitalize() for c in df.columns]
-    # CTO FIX: Barredora de columnas duplicadas y vacías
     df = df.loc[:, ~df.columns.duplicated()]
     if "" in df.columns: df = df.drop(columns=[""])
     
@@ -179,7 +177,6 @@ def leer_rutina(alumno):
     df = pd.DataFrame(sh.worksheet("Rutinas").get_all_records())
     if df.empty: return df
     df.columns = [str(c).strip().capitalize() for c in df.columns]
-    # CTO FIX: Barredora
     df = df.loc[:, ~df.columns.duplicated()]
     if "" in df.columns: df = df.drop(columns=[""])
     
@@ -194,7 +191,6 @@ def leer_sesiones_alumno(alumno):
     df = pd.DataFrame(sh.worksheet("Sesiones").get_all_records())
     if df.empty: return df
     df.columns = [str(c).strip().capitalize() for c in df.columns]
-    # CTO FIX: Barredora
     df = df.loc[:, ~df.columns.duplicated()]
     if "" in df.columns: df = df.drop(columns=[""])
     
@@ -218,7 +214,6 @@ def leer_registros_alumno(alumno):
         if v.lower() in ['date', 'day']: col_map[k] = 'Fecha'
     df = df.rename(columns=col_map)
     
-    # CTO FIX: Barredora profunda para proteger los gráficos
     df = df.loc[:, ~df.columns.duplicated()]
     if "" in df.columns: df = df.drop(columns=[""])
     
@@ -347,7 +342,11 @@ def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
 def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=None):
     sh = conectar_google_sheet()
     fecha = fecha_input.strftime("%Y-%m-%d") if fecha_input else datetime.now().strftime("%Y-%m-%d") 
-    sh.worksheet("Registros").append_row([fecha, usuario, ejercicio, peso, reps, rpe, notas])
+    
+    # CTO FIX 1: Obligamos a Google Sheets a entender el decimal usando una coma.
+    peso_seguro = str(peso).replace(".", ",")
+    
+    sh.worksheet("Registros").append_row([fecha, usuario, ejercicio, peso_seguro, reps, rpe, notas])
 
 @reintentar_conexion() 
 def actualizar_registros_masivo(usuario, df_editado):
@@ -358,7 +357,6 @@ def actualizar_registros_masivo(usuario, df_editado):
     if df_all.empty: return
     df_all.columns = [str(c).strip().capitalize() for c in df_all.columns]
     
-    # CTO FIX: Barredora antes de guardar
     df_all = df_all.loc[:, ~df_all.columns.duplicated()]
     if "" in df_all.columns: df_all = df_all.drop(columns=[""])
     
@@ -368,8 +366,14 @@ def actualizar_registros_masivo(usuario, df_editado):
     df_all = df_all.rename(columns=col_map)
     df_otros = df_all[df_all["Usuario"].astype(str).str.lower() != usuario.lower()]
     df_nuevos = df_editado.copy()
+    
     if "Fecha" in df_nuevos.columns:
         df_nuevos["Fecha"] = pd.to_datetime(df_nuevos["Fecha"], format='mixed', errors='ignore').dt.strftime("%Y-%m-%d")
+        
+    # CTO FIX 1: Protegemos los decimales también cuando editas desde la tabla
+    if "Peso" in df_nuevos.columns:
+        df_nuevos["Peso"] = df_nuevos["Peso"].astype(str).str.replace(".", ",")
+        
     df_final = pd.concat([df_otros, df_nuevos], ignore_index=True).fillna("").sort_values("Fecha")
     ws.clear()
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
@@ -893,7 +897,6 @@ else:
                     df_otros_ejercicios = df_r[df_r["Ejercicio"] != ej_sel_bitacora]
                     df_a_guardar = pd.concat([df_otros_ejercicios, edited_hist_alu], ignore_index=True)
                     
-                    # CTO FIX: Solo guardamos las columnas oficiales para no ensuciar la base de datos
                     cols_oficiales = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
                     for c in cols_oficiales:
                         if c not in df_a_guardar.columns: df_a_guardar[c] = ""
@@ -923,20 +926,22 @@ else:
             if rm_calculo > 0:
                 with st.expander("📊 Ver Tablas de RM y % de Fuerza", expanded=True):
                     st.caption(f"TABLA DE FUERZA (Base: {int(rm_calculo)}kg)")
-                    cols_grid = st.columns(4)
+                    
+                    # CTO FIX 2: Cuadrícula HTML blindada contra celulares
+                    html_rm = '<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">'
                     for i in range(1, 13):
                         peso_rm_i = rm_calculo * (1.0278 - 0.0278 * i)
                         if i == 1: peso_rm_i = rm_calculo
                         
-                        with cols_grid[(i-1)%4]:
-                            st.markdown(f"""
-                            <div class="rm-card">
-                                <div class="rm-title">{i}RM</div>
-                                <div class="rm-value">{int(peso_rm_i)}</div>
-                                <div class="rm-unit">kg</div>
-                            </div>
-                            <div style="margin-bottom:10px;"></div>
-                            """, unsafe_allow_html=True)
+                        html_rm += f'''
+                        <div class="rm-card" style="margin:0; padding:10px;">
+                            <div class="rm-title">{i}RM</div>
+                            <div class="rm-value">{int(peso_rm_i)}</div>
+                            <div class="rm-unit">kg</div>
+                        </div>
+                        '''
+                    html_rm += '</div>'
+                    st.markdown(html_rm, unsafe_allow_html=True)
 
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.markdown("#### % Cargas de Trabajo")
@@ -950,14 +955,18 @@ else:
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     
-                    col_p1, col_p2 = st.columns(2)
+                    # CTO FIX 2: Cuadrícula HTML para Porcentajes
                     porcentajes = [125, 120, 115, 110, 105, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30]
-                    
-                    for idx, porc in enumerate(porcentajes):
+                    html_porc = '<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">'
+                    for porc in porcentajes:
                         val_p = rm_calculo * (porc / 100)
-                        texto = f"**{porc}%** : {int(val_p)} kg"
-                        if idx % 2 == 0: col_p1.info(texto)
-                        else: col_p2.info(texto)
+                        html_porc += f'''
+                        <div style="background-color:#262730; padding:12px; border-radius:8px; text-align:center; border:1px solid #333; color:#E63946; font-weight:600;">
+                            <span style="color:#FFF;">{porc}%</span> : {int(val_p)} kg
+                        </div>
+                        '''
+                    html_porc += '</div>'
+                    st.markdown(html_porc, unsafe_allow_html=True)
                         
         with t4:
             st.markdown(f"### 👤 Perfil: {nombre}")
