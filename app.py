@@ -335,19 +335,17 @@ def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=Non
     sh = conectar_google_sheet()
     fecha = fecha_input.strftime("%Y-%m-%d") if fecha_input else datetime.now().strftime("%Y-%m-%d") 
     
-    # CTO FIX DECIMALES: Se manda como "Float" numérico puro, nada de cadenas de texto.
-    try:
-        peso_num = float(str(peso).replace(",", "."))
-    except:
-        peso_num = 0.0
+    # CTO FIX DECIMALES: Convertimos el texto ingresado a un objeto "float" matemático puro de Python
+    try: peso_num = float(str(peso).replace(",", "."))
+    except: peso_num = 0.0
         
     try: reps_num = int(reps)
     except: reps_num = 0
     
-    # "USER_ENTERED" obliga a Google Sheets a interpretarlo tal cual como un número
+    # IMPORTANTE: value_input_option="RAW" obliga a Sheets a aceptar el número matemático sin modificarlo
     sh.worksheet("Registros").append_row(
         [fecha, usuario, ejercicio, peso_num, reps_num, int(rpe), str(notas)],
-        value_input_option="USER_ENTERED"
+        value_input_option="RAW"
     )
 
 @reintentar_conexion() 
@@ -372,19 +370,27 @@ def actualizar_registros_masivo(usuario, df_editado):
     if "Fecha" in df_nuevos.columns:
         df_nuevos["Fecha"] = pd.to_datetime(df_nuevos["Fecha"], format='mixed', errors='ignore').dt.strftime("%Y-%m-%d")
         
-    # CTO FIX DECIMALES (Editor Masivo): Todo como número puro
+    # CTO FIX DECIMALES: Limpieza matemática antes de inyectar en masa
     def parse_number(val):
+        if pd.isna(val) or str(val).strip() == "": return ""
         try: return float(str(val).replace(",", "."))
-        except: return 0.0
+        except: return val
+        
+    def parse_int(val):
+        if pd.isna(val) or str(val).strip() == "": return ""
+        try: return int(float(str(val).replace(",", ".")))
+        except: return val
 
     if "Peso" in df_nuevos.columns:
         df_nuevos["Peso"] = df_nuevos["Peso"].apply(parse_number)
     if "Repeticiones" in df_nuevos.columns:
-        df_nuevos["Repeticiones"] = df_nuevos["Repeticiones"].apply(parse_number).astype(int)
+        df_nuevos["Repeticiones"] = df_nuevos["Repeticiones"].apply(parse_int)
         
     df_final = pd.concat([df_otros, df_nuevos], ignore_index=True).fillna("").sort_values("Fecha")
     ws.clear()
-    ws.update([df_final.columns.values.tolist()] + df_final.values.tolist(), value_input_option="USER_ENTERED")
+    
+    # IMPORTANTE: "RAW" en lugar de "USER_ENTERED"
+    ws.update([df_final.columns.values.tolist()] + df_final.values.tolist(), value_input_option="RAW")
 
 @reintentar_conexion() 
 def guardar_estado_sesion(usuario, estado, fecha_dt=None):
@@ -935,7 +941,6 @@ else:
                 with st.expander("📊 Ver Tablas de RM y % de Fuerza", expanded=True):
                     st.caption(f"TABLA DE FUERZA (Base: {int(rm_calculo)}kg)")
                     
-                    # CTO FIX: Tabla nativa Markdown (Irrompible y se ve perfecto en celular)
                     md_rm = "| Repeticiones | Peso Estimado (kg) | Repeticiones | Peso Estimado (kg) |\n"
                     md_rm += "| :---: | :---: | :---: | :---: |\n"
                     for i in range(1, 7):
@@ -957,7 +962,6 @@ else:
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     
-                    # CTO FIX: Tabla nativa Markdown para porcentajes
                     porcentajes_izq = [125, 115, 105, 95, 85, 75, 65, 55, 45, 35]
                     porcentajes_der = [120, 110, 100, 90, 80, 70, 60, 50, 40, 30]
                     
