@@ -95,18 +95,6 @@ def cargar_estilos():
         [data-testid="stHeader"] { visibility: hidden !important; background: transparent !important; }
         .stAppDeployButton { display: none !important; visibility: hidden !important; }
 
-        /* Estilo para las tarjetas de RM */
-        .rm-card {
-            background-color: #262730;
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-            border: 1px solid #333;
-        }
-        .rm-title { font-size: 0.9rem; color: #aaa; }
-        .rm-value { font-size: 1.5rem; font-weight: 800; color: #E63946; }
-        .rm-unit { font-size: 0.8rem; color: #aaa; }
-        
         .big-metric { font-size: 3rem; font-weight: 800; color: #E63946; text-align: center; }
         .sub-metric { font-size: 1rem; color: #aaa; text-align: center; margin-bottom: 20px; }
 
@@ -117,6 +105,10 @@ def cargar_estilos():
         [data-testid="stArrowVegaLiteChart"], [data-testid="stVegaLiteChart"], canvas.marks {
             pointer-events: none !important;
         }
+        
+        /* Ajuste de tablas en markdown */
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 10px !important; text-align: center !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -343,10 +335,20 @@ def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=Non
     sh = conectar_google_sheet()
     fecha = fecha_input.strftime("%Y-%m-%d") if fecha_input else datetime.now().strftime("%Y-%m-%d") 
     
-    # CTO FIX 1: Obligamos a Google Sheets a entender el decimal usando una coma.
-    peso_seguro = str(peso).replace(".", ",")
+    # CTO FIX DECIMALES: Se manda como "Float" numérico puro, nada de cadenas de texto.
+    try:
+        peso_num = float(str(peso).replace(",", "."))
+    except:
+        peso_num = 0.0
+        
+    try: reps_num = int(reps)
+    except: reps_num = 0
     
-    sh.worksheet("Registros").append_row([fecha, usuario, ejercicio, peso_seguro, reps, rpe, notas])
+    # "USER_ENTERED" obliga a Google Sheets a interpretarlo tal cual como un número
+    sh.worksheet("Registros").append_row(
+        [fecha, usuario, ejercicio, peso_num, reps_num, int(rpe), str(notas)],
+        value_input_option="USER_ENTERED"
+    )
 
 @reintentar_conexion() 
 def actualizar_registros_masivo(usuario, df_editado):
@@ -370,13 +372,19 @@ def actualizar_registros_masivo(usuario, df_editado):
     if "Fecha" in df_nuevos.columns:
         df_nuevos["Fecha"] = pd.to_datetime(df_nuevos["Fecha"], format='mixed', errors='ignore').dt.strftime("%Y-%m-%d")
         
-    # CTO FIX 1: Protegemos los decimales también cuando editas desde la tabla
+    # CTO FIX DECIMALES (Editor Masivo): Todo como número puro
+    def parse_number(val):
+        try: return float(str(val).replace(",", "."))
+        except: return 0.0
+
     if "Peso" in df_nuevos.columns:
-        df_nuevos["Peso"] = df_nuevos["Peso"].astype(str).str.replace(".", ",")
+        df_nuevos["Peso"] = df_nuevos["Peso"].apply(parse_number)
+    if "Repeticiones" in df_nuevos.columns:
+        df_nuevos["Repeticiones"] = df_nuevos["Repeticiones"].apply(parse_number).astype(int)
         
     df_final = pd.concat([df_otros, df_nuevos], ignore_index=True).fillna("").sort_values("Fecha")
     ws.clear()
-    ws.update([df_final.columns.values.tolist()] + df_final.values.tolist())
+    ws.update([df_final.columns.values.tolist()] + df_final.values.tolist(), value_input_option="USER_ENTERED")
 
 @reintentar_conexion() 
 def guardar_estado_sesion(usuario, estado, fecha_dt=None):
@@ -927,23 +935,17 @@ else:
                 with st.expander("📊 Ver Tablas de RM y % de Fuerza", expanded=True):
                     st.caption(f"TABLA DE FUERZA (Base: {int(rm_calculo)}kg)")
                     
-                    # CTO FIX 2: Cuadrícula HTML blindada contra celulares
-                    html_rm = '<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">'
-                    for i in range(1, 13):
-                        peso_rm_i = rm_calculo * (1.0278 - 0.0278 * i)
-                        if i == 1: peso_rm_i = rm_calculo
-                        
-                        html_rm += f'''
-                        <div class="rm-card" style="margin:0; padding:10px;">
-                            <div class="rm-title">{i}RM</div>
-                            <div class="rm-value">{int(peso_rm_i)}</div>
-                            <div class="rm-unit">kg</div>
-                        </div>
-                        '''
-                    html_rm += '</div>'
-                    st.markdown(html_rm, unsafe_allow_html=True)
+                    # CTO FIX: Tabla nativa Markdown (Irrompible y se ve perfecto en celular)
+                    md_rm = "| Repeticiones | Peso Estimado (kg) | Repeticiones | Peso Estimado (kg) |\n"
+                    md_rm += "| :---: | :---: | :---: | :---: |\n"
+                    for i in range(1, 7):
+                        peso_izq = rm_calculo if i == 1 else rm_calculo * (1.0278 - 0.0278 * i)
+                        i_der = i + 6
+                        peso_der = rm_calculo * (1.0278 - 0.0278 * i_der)
+                        md_rm += f"| **{i} RM** | {peso_izq:.1f} | **{i_der} RM** | {peso_der:.1f} |\n"
+                    
+                    st.markdown(md_rm)
 
-                    st.markdown("<br>", unsafe_allow_html=True)
                     st.markdown("#### % Cargas de Trabajo")
                     
                     with st.container(border=True):
@@ -955,18 +957,18 @@ else:
                     
                     st.markdown("<br>", unsafe_allow_html=True)
                     
-                    # CTO FIX 2: Cuadrícula HTML para Porcentajes
-                    porcentajes = [125, 120, 115, 110, 105, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30]
-                    html_porc = '<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">'
-                    for porc in porcentajes:
-                        val_p = rm_calculo * (porc / 100)
-                        html_porc += f'''
-                        <div style="background-color:#262730; padding:12px; border-radius:8px; text-align:center; border:1px solid #333; color:#E63946; font-weight:600;">
-                            <span style="color:#FFF;">{porc}%</span> : {int(val_p)} kg
-                        </div>
-                        '''
-                    html_porc += '</div>'
-                    st.markdown(html_porc, unsafe_allow_html=True)
+                    # CTO FIX: Tabla nativa Markdown para porcentajes
+                    porcentajes_izq = [125, 115, 105, 95, 85, 75, 65, 55, 45, 35]
+                    porcentajes_der = [120, 110, 100, 90, 80, 70, 60, 50, 40, 30]
+                    
+                    md_porc = "| % Fuerza | Carga (kg) | % Fuerza | Carga (kg) |\n"
+                    md_porc += "| :---: | :---: | :---: | :---: |\n"
+                    for p_i, p_d in zip(porcentajes_izq, porcentajes_der):
+                        val_i = rm_calculo * (p_i / 100)
+                        val_d = rm_calculo * (p_d / 100)
+                        md_porc += f"| **{p_i}%** | {val_i:.1f} | **{p_d}%** | {val_d:.1f} |\n"
+                        
+                    st.markdown(md_porc)
                         
         with t4:
             st.markdown(f"### 👤 Perfil: {nombre}")
