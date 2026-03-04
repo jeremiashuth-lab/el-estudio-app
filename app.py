@@ -335,17 +335,16 @@ def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=Non
     sh = conectar_google_sheet()
     fecha = fecha_input.strftime("%Y-%m-%d") if fecha_input else datetime.now().strftime("%Y-%m-%d") 
     
-    # CTO FIX DECIMALES: Convertimos el texto ingresado a un objeto "float" matemático puro de Python
-    try: peso_num = float(str(peso).replace(",", "."))
-    except: peso_num = 0.0
+    # CTO FIX DECIMALES (ESTA VEZ ES LA DEFINITIVA)
+    # Reemplazamos cualquier punto por coma y lo enviamos como TEXTO con USER_ENTERED
+    peso_str = str(peso).replace(".", ",")
         
     try: reps_num = int(reps)
     except: reps_num = 0
     
-    # IMPORTANTE: value_input_option="RAW" obliga a Sheets a aceptar el número matemático sin modificarlo
     sh.worksheet("Registros").append_row(
-        [fecha, usuario, ejercicio, peso_num, reps_num, int(rpe), str(notas)],
-        value_input_option="RAW"
+        [fecha, usuario, ejercicio, peso_str, reps_num, int(rpe), str(notas)],
+        value_input_option="USER_ENTERED"
     )
 
 @reintentar_conexion() 
@@ -370,27 +369,26 @@ def actualizar_registros_masivo(usuario, df_editado):
     if "Fecha" in df_nuevos.columns:
         df_nuevos["Fecha"] = pd.to_datetime(df_nuevos["Fecha"], format='mixed', errors='ignore').dt.strftime("%Y-%m-%d")
         
-    # CTO FIX DECIMALES: Limpieza matemática antes de inyectar en masa
-    def parse_number(val):
+    # Limpiamos todo para que respete las comas antes de enviarlo
+    def parse_number_to_comma_string(val):
         if pd.isna(val) or str(val).strip() == "": return ""
-        try: return float(str(val).replace(",", "."))
-        except: return val
-        
+        return str(val).replace(".", ",")
+
     def parse_int(val):
         if pd.isna(val) or str(val).strip() == "": return ""
         try: return int(float(str(val).replace(",", ".")))
         except: return val
 
     if "Peso" in df_nuevos.columns:
-        df_nuevos["Peso"] = df_nuevos["Peso"].apply(parse_number)
+        df_nuevos["Peso"] = df_nuevos["Peso"].apply(parse_number_to_comma_string)
     if "Repeticiones" in df_nuevos.columns:
         df_nuevos["Repeticiones"] = df_nuevos["Repeticiones"].apply(parse_int)
         
     df_final = pd.concat([df_otros, df_nuevos], ignore_index=True).fillna("").sort_values("Fecha")
     ws.clear()
     
-    # IMPORTANTE: "RAW" en lugar de "USER_ENTERED"
-    ws.update([df_final.columns.values.tolist()] + df_final.values.tolist(), value_input_option="RAW")
+    # Enviamos todo con USER_ENTERED para que Google traduzca las comas
+    ws.update([df_final.columns.values.tolist()] + df_final.values.tolist(), value_input_option="USER_ENTERED")
 
 @reintentar_conexion() 
 def guardar_estado_sesion(usuario, estado, fecha_dt=None):
@@ -793,6 +791,7 @@ else:
                                 st.error("⚠️ Error: Ejercicio, Kilos y Reps son campos obligatorios.")
                             else:
                                 try:
+                                    # Solo validamos que sea número para evitar letras, el guardado real se hace abajo.
                                     kg_limpio = float(kg_in.replace(",", "."))
                                     reps_limpio = int(reps_in.strip())
                                     
@@ -897,31 +896,47 @@ else:
                 
                 st.markdown("---")
                 
-                st.markdown(f"#### ✏️ Corrector de Registros: {ej_sel_bitacora}")
-                st.caption("Corrige o borra filas y presiona Guardar. Para borrar una fila, selecciónala y presiona Suprimir/Borrar.")
+                # CTO FIX UI: Chau tabla Excel, hola gestor minimalista de borrado
+                st.markdown(f"#### 🗑️ Gestor de Registros: {ej_sel_bitacora}")
+                st.caption("Selecciona las series que anotaste mal o que están repetidas y bórralas.")
                 
-                cols_show = ["Fecha", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
-                for c in cols_show:
-                    if c not in df_plt.columns: df_plt[c] = ""
+                df_hist_editor = df_plt.sort_values("Fecha", ascending=False)
                 
-                df_hist_editor = df_plt[cols_show].sort_values("Fecha", ascending=False)
-                edited_hist_alu = st.data_editor(df_hist_editor, num_rows="dynamic", key=f"hist_edit_alu_{alias}", use_container_width=True)
-                
-                if st.button("💾 GUARDAR CORRECCIONES", use_container_width=True):
-                    df_otros_ejercicios = df_r[df_r["Ejercicio"] != ej_sel_bitacora]
-                    df_a_guardar = pd.concat([df_otros_ejercicios, edited_hist_alu], ignore_index=True)
+                registros_a_borrar = []
+                for idx, row in df_hist_editor.iterrows():
+                    fecha_str = row['Fecha'].strftime('%d/%m/%Y') if pd.notnull(row['Fecha']) else "Sin Fecha"
+                    peso_val = row.get('Peso', '-')
+                    reps_val = row.get('Repeticiones', '-')
+                    rpe_val = row.get('Rpe', '-')
                     
-                    cols_oficiales = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
-                    for c in cols_oficiales:
-                        if c not in df_a_guardar.columns: df_a_guardar[c] = ""
-                    df_a_guardar = df_a_guardar[cols_oficiales]
-                    df_a_guardar["Usuario"] = alias
-                    
-                    actualizar_registros_masivo(alias, df_a_guardar)
-                    leer_registros_alumno.clear()
-                    st.success("¡Tus correcciones han sido guardadas de forma segura!")
-                    time.sleep(1)
-                    st.rerun()
+                    # Creamos una etiqueta limpia para cada registro
+                    etiqueta = f"📅 {fecha_str} | ⚖️ {peso_val} kg x {reps_val} reps | 🔥 RPE: {rpe_val}"
+                    if st.checkbox(etiqueta, key=f"del_{idx}"):
+                        registros_a_borrar.append(idx)
+                
+                if st.button("🚨 BORRAR SELECCIONADOS", type="primary", use_container_width=True):
+                    if len(registros_a_borrar) > 0:
+                        # Borramos las filas seleccionadas de la vista de este ejercicio
+                        df_plt_limpio = df_plt.drop(index=registros_a_borrar)
+                        
+                        # Pegamos los registros de los OTROS ejercicios que no tocamos
+                        df_otros_ejercicios = df_r[df_r["Ejercicio"] != ej_sel_bitacora]
+                        df_a_guardar = pd.concat([df_otros_ejercicios, df_plt_limpio], ignore_index=True)
+                        
+                        cols_oficiales = ["Fecha", "Usuario", "Ejercicio", "Peso", "Repeticiones", "Rpe", "Notas"]
+                        for c in cols_oficiales:
+                            if c not in df_a_guardar.columns: df_a_guardar[c] = ""
+                        
+                        df_a_guardar = df_a_guardar[cols_oficiales]
+                        df_a_guardar["Usuario"] = alias
+                        
+                        actualizar_registros_masivo(alias, df_a_guardar)
+                        leer_registros_alumno.clear()
+                        st.success("¡Registros eliminados de tu historial!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("No seleccionaste ninguna serie para borrar.")
             else:
                 st.info("Aún no tienes registros en tu bitácora.")
 
