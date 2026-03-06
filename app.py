@@ -267,6 +267,15 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Rutinas")
     all_data = ws.get_all_records()
+    df_old = pd.DataFrame(all_data)
+    
+    # SISTEMA DE SEGURIDAD 1: Verificación de lectura cruda
+    if df_old.empty:
+        raw_vals = ws.get_all_values()
+        if len(raw_vals) > 1:
+            st.error("🚨 SISTEMA DE SEGURIDAD: Error de lectura detectado en Google Sheets. Guardado bloqueado para proteger tus rutinas.")
+            return
+
     cols = ["Alumno", "Dia", "Seccion", "Orden", "Ejercicio", "Link", "Series", "Reps", "Kg", "Notas"]
     nuevas_filas = []
     
@@ -286,8 +295,6 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     procesar_df(df_f, "Fuerza")
     procesar_df(df_ca, "Cardio")
 
-    df_old = pd.DataFrame(all_data)
-    
     if not df_old.empty:
         df_old.columns = [str(c).strip().capitalize() for c in df_old.columns]
         df_old = df_old.loc[:, ~df_old.columns.duplicated()]
@@ -295,12 +302,13 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
         mask = ~((df_old["Alumno"].astype(str).str.lower() == alumno.lower()) & (df_old["Dia"].astype(str) == dia))
         df_clean = df_old[mask]
         df_final = pd.concat([df_clean, pd.DataFrame(nuevas_filas)], ignore_index=True)
+        
+        # SISTEMA DE SEGURIDAD 2: Antídoto contra pérdida masiva (> 50% de la base de datos)
+        if len(df_old) >= 10 and len(df_final) < (len(df_old) * 0.5):
+            st.error("🚨 SISTEMA DE SEGURIDAD CRÍTICO: Se intentó borrar una gran cantidad de rutinas por accidente. Guardado bloqueado automáticamente.")
+            return
     else:
         df_final = pd.DataFrame(nuevas_filas)
-
-    if len(df_old) > 20 and len(df_final) < 10:
-        st.error(f"🚨 ERROR DE SEGURIDAD CRÍTICO: Guardado cancelado.")
-        return 
 
     df_final = df_final.fillna("")
     for c in cols: 
@@ -313,8 +321,11 @@ def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
     rows_c = []; rows_f = []; rows_ca = []
     for idx, row in rut_hoy.iterrows():
         seccion = row["Seccion"]
-        key_kg = f"kg_{idx}"
-        key_notas = f"notas_{idx}"
+        
+        # CTO FIX: Claves de Memoria Únicas para evitar cruces en iPhone/Safari
+        ej_limpio = re.sub(r'[^a-zA-Z0-9]', '', str(row['Ejercicio']))
+        key_kg = f"kg_{alumno}_{dia}_{idx}_{ej_limpio}"
+        key_notas = f"notas_{alumno}_{dia}_{idx}_{ej_limpio}"
         
         nuevo_kg = str(session_state.get(key_kg, row.get("Kg", "")))
         nueva_nota = str(session_state.get(key_notas, row.get("Notas", "")))
@@ -325,6 +336,7 @@ def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
         if seccion == "Calentamiento": rows_c.append(new_row)
         elif seccion == "Fuerza": rows_f.append(new_row)
         elif seccion == "Cardio": rows_ca.append(new_row)
+    
     df_c = pd.DataFrame(rows_c) if rows_c else pd.DataFrame()
     df_f = pd.DataFrame(rows_f) if rows_f else pd.DataFrame()
     df_ca = pd.DataFrame(rows_ca) if rows_ca else pd.DataFrame()
@@ -335,8 +347,6 @@ def guardar_registro(usuario, ejercicio, peso, reps, rpe, notas, fecha_input=Non
     sh = conectar_google_sheet()
     fecha = fecha_input.strftime("%Y-%m-%d") if fecha_input else datetime.now().strftime("%Y-%m-%d") 
     
-    # CTO FIX DECIMALES (ESTA VEZ ES LA DEFINITIVA)
-    # Reemplazamos cualquier punto por coma y lo enviamos como TEXTO con USER_ENTERED
     peso_str = str(peso).replace(".", ",")
         
     try: reps_num = int(reps)
@@ -369,7 +379,6 @@ def actualizar_registros_masivo(usuario, df_editado):
     if "Fecha" in df_nuevos.columns:
         df_nuevos["Fecha"] = pd.to_datetime(df_nuevos["Fecha"], format='mixed', errors='ignore').dt.strftime("%Y-%m-%d")
         
-    # Limpiamos todo para que respete las comas antes de enviarlo
     def parse_number_to_comma_string(val):
         if pd.isna(val) or str(val).strip() == "": return ""
         return str(val).replace(".", ",")
@@ -387,7 +396,6 @@ def actualizar_registros_masivo(usuario, df_editado):
     df_final = pd.concat([df_otros, df_nuevos], ignore_index=True).fillna("").sort_values("Fecha")
     ws.clear()
     
-    # Enviamos todo con USER_ENTERED para que Google traduzca las comas
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist(), value_input_option="USER_ENTERED")
 
 @reintentar_conexion() 
@@ -475,7 +483,8 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-def renderizar_bloque_seccion(titulo, df_seccion):
+# CTO FIX: Se agregaron parámetros de alumno y día para el ADN de las variables
+def renderizar_bloque_seccion(titulo, df_seccion, alumno, dia):
     if df_seccion.empty: return
     st.markdown(f"#### {titulo}")
     def obtener_bloque(orden):
@@ -492,12 +501,12 @@ def renderizar_bloque_seccion(titulo, df_seccion):
             with st.container(border=True):
                 st.markdown("<div class='red-border-trigger'></div>", unsafe_allow_html=True)
                 for idx, row, _ in items:
-                    render_tarjeta_individual(idx, row)
+                    render_tarjeta_individual(idx, row, alumno, dia)
         else:
             for idx, row, _ in items:
-                render_tarjeta_individual(idx, row)
+                render_tarjeta_individual(idx, row, alumno, dia)
 
-def render_tarjeta_individual(idx, row):
+def render_tarjeta_individual(idx, row, alumno, dia):
     ej_nombre = row['Ejercicio']
     series_reps = f"{row.get('Series','?')} x {row.get('Reps','?')}"
     orden_prefix = ""
@@ -508,8 +517,12 @@ def render_tarjeta_individual(idx, row):
         link = str(row.get('Link', '')).strip()
         if link: st.link_button("📺 Ver Video", link, use_container_width=True)
         c_kg, c_notas = st.columns([1, 2])
-        k_kg = f"kg_{idx}"
-        k_notas = f"notas_{idx}"
+        
+        # CTO FIX: ADN Único para evitar mezcla de datos en iPhone
+        ej_limpio = re.sub(r'[^a-zA-Z0-9]', '', str(ej_nombre))
+        k_kg = f"kg_{alumno}_{dia}_{idx}_{ej_limpio}"
+        k_notas = f"notas_{alumno}_{dia}_{idx}_{ej_limpio}"
+        
         if k_kg in st.session_state: val_kg = st.session_state[k_kg]
         else:
             val_kg = str(row.get('Kg', ''))
@@ -518,6 +531,7 @@ def render_tarjeta_individual(idx, row):
         else:
             val_notas = str(row.get('Notas', ''))
             if val_notas == "nan": val_notas = ""
+            
         with c_kg: st.text_input("Kg Realizados", value=val_kg, key=k_kg)
         with c_notas: st.text_area("Notas / Instrucciones", value=val_notas, key=k_notas, height=68)
 
@@ -752,9 +766,9 @@ else:
                 df_sec_f = r_hoy[r_hoy["Seccion"] == "Fuerza"]
                 df_sec_ca = r_hoy[r_hoy["Seccion"] == "Cardio"]
 
-                renderizar_bloque_seccion("🔥 Calentamiento", df_sec_c)
-                renderizar_bloque_seccion("🏋️‍♂️ Fuerza", df_sec_f)
-                renderizar_bloque_seccion("🏃‍♂️ Cardio", df_sec_ca)
+                renderizar_bloque_seccion("🔥 Calentamiento", df_sec_c, alias, d_hoy)
+                renderizar_bloque_seccion("🏋️‍♂️ Fuerza", df_sec_f, alias, d_hoy)
+                renderizar_bloque_seccion("🏃‍♂️ Cardio", df_sec_ca, alias, d_hoy)
 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
@@ -791,7 +805,6 @@ else:
                                 st.error("⚠️ Error: Ejercicio, Kilos y Reps son campos obligatorios.")
                             else:
                                 try:
-                                    # Solo validamos que sea número para evitar letras, el guardado real se hace abajo.
                                     kg_limpio = float(kg_in.replace(",", "."))
                                     reps_limpio = int(reps_in.strip())
                                     
@@ -896,7 +909,6 @@ else:
                 
                 st.markdown("---")
                 
-                # CTO FIX UI: Chau tabla Excel, hola gestor minimalista de borrado
                 st.markdown(f"#### 🗑️ Gestor de Registros: {ej_sel_bitacora}")
                 st.caption("Selecciona las series que anotaste mal o que están repetidas y bórralas.")
                 
@@ -909,17 +921,14 @@ else:
                     reps_val = row.get('Repeticiones', '-')
                     rpe_val = row.get('Rpe', '-')
                     
-                    # Creamos una etiqueta limpia para cada registro
                     etiqueta = f"📅 {fecha_str} | ⚖️ {peso_val} kg x {reps_val} reps | 🔥 RPE: {rpe_val}"
                     if st.checkbox(etiqueta, key=f"del_{idx}"):
                         registros_a_borrar.append(idx)
                 
                 if st.button("🚨 BORRAR SELECCIONADOS", type="primary", use_container_width=True):
                     if len(registros_a_borrar) > 0:
-                        # Borramos las filas seleccionadas de la vista de este ejercicio
                         df_plt_limpio = df_plt.drop(index=registros_a_borrar)
                         
-                        # Pegamos los registros de los OTROS ejercicios que no tocamos
                         df_otros_ejercicios = df_r[df_r["Ejercicio"] != ej_sel_bitacora]
                         df_a_guardar = pd.concat([df_otros_ejercicios, df_plt_limpio], ignore_index=True)
                         
