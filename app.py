@@ -269,7 +269,6 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
     all_data = ws.get_all_records()
     df_old = pd.DataFrame(all_data)
     
-    # SISTEMA DE SEGURIDAD 1: Verificación de lectura cruda
     if df_old.empty:
         raw_vals = ws.get_all_values()
         if len(raw_vals) > 1:
@@ -303,7 +302,6 @@ def guardar_rutina_actualizada(alumno, dia, df_c, df_f, df_ca):
         df_clean = df_old[mask]
         df_final = pd.concat([df_clean, pd.DataFrame(nuevas_filas)], ignore_index=True)
         
-        # SISTEMA DE SEGURIDAD 2: Antídoto contra pérdida masiva (> 50% de la base de datos)
         if len(df_old) >= 10 and len(df_final) < (len(df_old) * 0.5):
             st.error("🚨 SISTEMA DE SEGURIDAD CRÍTICO: Se intentó borrar una gran cantidad de rutinas por accidente. Guardado bloqueado automáticamente.")
             return
@@ -321,8 +319,6 @@ def guardar_desde_tarjetas(alumno, dia, rut_hoy, session_state):
     rows_c = []; rows_f = []; rows_ca = []
     for idx, row in rut_hoy.iterrows():
         seccion = row["Seccion"]
-        
-        # CTO FIX: Claves de Memoria Únicas para evitar cruces en iPhone/Safari
         ej_limpio = re.sub(r'[^a-zA-Z0-9]', '', str(row['Ejercicio']))
         key_kg = f"kg_{alumno}_{dia}_{idx}_{ej_limpio}"
         key_notas = f"notas_{alumno}_{dia}_{idx}_{ej_limpio}"
@@ -398,12 +394,13 @@ def actualizar_registros_masivo(usuario, df_editado):
     
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist(), value_input_option="USER_ENTERED")
 
+# CTO FIX: Modificamos el guardado de sesiones para incluir el "Dia_rutina" (la cuarta columna en Sheets)
 @reintentar_conexion() 
-def guardar_estado_sesion(usuario, estado, fecha_dt=None):
+def guardar_estado_sesion(usuario, estado, fecha_dt=None, dia_rutina=""):
     sh = conectar_google_sheet()
     ws = sh.worksheet("Sesiones")
     fecha_str = fecha_dt.strftime("%Y-%m-%d") if fecha_dt else datetime.now().strftime("%Y-%m-%d")
-    ws.append_row([fecha_str, usuario, estado])
+    ws.append_row([fecha_str, usuario, estado, dia_rutina])
 
 def preparar_df_editor(df_input, columnas, filas_minimas=4):
     if df_input.empty: df_input = pd.DataFrame(columns=columnas)
@@ -483,7 +480,6 @@ def render_calendar(year, month, df_sesiones):
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# CTO FIX: Se agregaron parámetros de alumno y día para el ADN de las variables
 def renderizar_bloque_seccion(titulo, df_seccion, alumno, dia):
     if df_seccion.empty: return
     st.markdown(f"#### {titulo}")
@@ -518,7 +514,6 @@ def render_tarjeta_individual(idx, row, alumno, dia):
         if link: st.link_button("📺 Ver Video", link, use_container_width=True)
         c_kg, c_notas = st.columns([1, 2])
         
-        # CTO FIX: ADN Único para evitar mezcla de datos en iPhone
         ej_limpio = re.sub(r'[^a-zA-Z0-9]', '', str(ej_nombre))
         k_kg = f"kg_{alumno}_{dia}_{idx}_{ej_limpio}"
         k_notas = f"notas_{alumno}_{dia}_{idx}_{ej_limpio}"
@@ -817,12 +812,14 @@ else:
                                     st.error("⚠️ Error: Los Kilos y Reps deben ser solo números (Ej: 72.5). No escribas letras.")
 
                 c_ok, c_fail = st.columns(2)
+                
+                # CTO FIX: Ahora cuando aprietan TERMINÉ, también guardamos en la base de datos qué "d_hoy" acaban de terminar.
                 if c_ok.button("✅ TERMINÉ POR HOY", use_container_width=True):
-                    guardar_estado_sesion(alias, "Completado")
+                    guardar_estado_sesion(alias, "Completado", fecha_dt=None, dia_rutina=d_hoy)
                     leer_sesiones_alumno.clear() 
                     st.balloons()
                 if c_fail.button("⚠️ INCOMPLETO", use_container_width=True):
-                    guardar_estado_sesion(alias, "Incompleto")
+                    guardar_estado_sesion(alias, "Incompleto", fecha_dt=None, dia_rutina=d_hoy)
                     leer_sesiones_alumno.clear()
             else: st.info("No tienes rutina asignada aún.")
             
@@ -830,6 +827,20 @@ else:
             st.markdown("### 📅 Asistencia")
             dfs = leer_sesiones_alumno(alias)
             
+            # Buscamos las rutinas del alumno para saber qué opciones darle (Día 1, Día 2, etc.)
+            rut_asistencia = leer_rutina(alias)
+            dias_opciones = sorted(rut_asistencia["Dia"].unique(), key=natural_sort_key) if not rut_asistencia.empty else ["Día 1", "Día 2", "Día 3"]
+            
+            # CTO FIX: La magia visual. Buscamos el último "Completado" y mostramos el cartelito.
+            if not dfs.empty and "Dia_rutina" in dfs.columns:
+                df_completados = dfs[dfs["Estado"] == "Completado"].sort_values("Fecha", ascending=False)
+                if not df_completados.empty:
+                    ultimo_registro = df_completados.iloc[0]
+                    fecha_str = ultimo_registro["Fecha"].strftime("%d/%m/%Y")
+                    dia_str = str(ultimo_registro.get("Dia_rutina", ""))
+                    if dia_str.strip():
+                        st.info(f"📍 **Último entrenamiento registrado:** {dia_str} (el {fecha_str})")
+
             MESES_LIST = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
             c_sel_m, c_sel_y = st.columns([2, 1])
             mes_actual_idx = datetime.now().month
@@ -848,11 +859,18 @@ else:
             
             with st.expander("🗓️ ¿Olvidaste dar el presente?"):
                 st.caption("Registra un entrenamiento que hiciste antes y olvidaste marcar.")
-                col_d_pas, col_b_pas = st.columns([2,1])
-                fecha_pasada = col_d_pas.date_input("Fecha del entreno", value=datetime.now().date() - timedelta(days=1), max_value=datetime.now().date())
+                
+                # CTO FIX: Dividí el espacio en 3 columnas para que entre el nuevo selector de día.
+                col_d_pas, col_dia_pas, col_b_pas = st.columns([2, 2, 2])
+                fecha_pasada = col_d_pas.date_input("Fecha", value=datetime.now().date() - timedelta(days=1), max_value=datetime.now().date())
+                
+                # Agregamos la lista desplegable
+                dia_pasado = col_dia_pas.selectbox("¿Qué día hiciste?", dias_opciones)
+                
                 if col_b_pas.button("Marcar Completado", use_container_width=True):
-                    guardar_estado_sesion(alias, "Completado", fecha_pasada)
-                    st.success(f"Entreno del {fecha_pasada.strftime('%d/%m')} guardado.")
+                    # Guardamos enviando la fecha pasada Y el día seleccionado
+                    guardar_estado_sesion(alias, "Completado", fecha_dt=fecha_pasada, dia_rutina=dia_pasado)
+                    st.success(f"Entreno ({dia_pasado}) del {fecha_pasada.strftime('%d/%m')} guardado.")
                     leer_sesiones_alumno.clear() 
                     time.sleep(1); st.rerun()
 
