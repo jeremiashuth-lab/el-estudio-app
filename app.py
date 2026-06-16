@@ -394,7 +394,6 @@ def actualizar_registros_masivo(usuario, df_editado):
     
     ws.update([df_final.columns.values.tolist()] + df_final.values.tolist(), value_input_option="USER_ENTERED")
 
-# CTO FIX: Modificamos el guardado de sesiones para incluir el "Dia_rutina" (la cuarta columna en Sheets)
 @reintentar_conexion() 
 def guardar_estado_sesion(usuario, estado, fecha_dt=None, dia_rutina=""):
     sh = conectar_google_sheet()
@@ -567,7 +566,8 @@ if not st.session_state['logueado']:
                         st.session_state['usuario_info'] = user
                         st.session_state['esperando_login_manual'] = False
                         
-                        fecha_expiracion = datetime.now() + timedelta(days=30)
+                        # CTO FIX: Cookie extendida a 365 días para evitar cierres de sesión
+                        fecha_expiracion = datetime.now() + timedelta(days=365)
                         gestor_cookies.set("sello_vip_estudio", user['Usuario'], expires_at=fecha_expiracion)
                         
                         if str(user.get('Rol','')).lower() == 'alumno':
@@ -591,8 +591,20 @@ else:
                 us = obtener_todos_usuarios()
                 als = us[us["Rol"] == "alumno"]["Usuario"].tolist()
                 
-                alu = st.selectbox("ALUMNO", als)
-                dia = st.radio("DÍA", ["Día 1", "Día 2", "Día 3", "Día 4", "Día 5"], horizontal=True)
+                # CTO FIX: Memoria Ancla para Admin (Alumno)
+                if "admin_alumno_seleccionado" not in st.session_state:
+                    st.session_state["admin_alumno_seleccionado"] = als[0] if als else ""
+                idx_alu = als.index(st.session_state["admin_alumno_seleccionado"]) if st.session_state["admin_alumno_seleccionado"] in als else 0
+                alu = st.selectbox("ALUMNO", als, index=idx_alu, key="widget_alu_admin")
+                st.session_state["admin_alumno_seleccionado"] = alu
+                
+                # CTO FIX: Memoria Ancla para Admin (Día)
+                dias_radio = ["Día 1", "Día 2", "Día 3", "Día 4", "Día 5"]
+                if "admin_dia_seleccionado" not in st.session_state:
+                    st.session_state["admin_dia_seleccionado"] = dias_radio[0]
+                idx_dia_admin = dias_radio.index(st.session_state["admin_dia_seleccionado"]) if st.session_state["admin_dia_seleccionado"] in dias_radio else 0
+                dia = st.radio("DÍA", dias_radio, index=idx_dia_admin, horizontal=True, key="widget_dia_admin")
+                st.session_state["admin_dia_seleccionado"] = dia
 
             rut = leer_rutina(alu)
             cols_c = ["Ejercicio", "Link", "Series", "Reps", "Notas"]
@@ -741,7 +753,17 @@ else:
                     col_d, col_w = st.columns([3, 1])
                     with col_d:
                         dias_disponibles = sorted(rut["Dia"].unique(), key=natural_sort_key)
-                        d_hoy = st.selectbox("Selecciona Día", dias_disponibles, key="selector_dia_alumno")
+                        
+                        # CTO FIX: Memoria Ancla para Alumnos (Evita que el iPhone salte al Día 1)
+                        if "alumno_dia_seleccionado" not in st.session_state:
+                            st.session_state["alumno_dia_seleccionado"] = dias_disponibles[0] if dias_disponibles else ""
+                        
+                        idx_dia = 0
+                        if st.session_state["alumno_dia_seleccionado"] in dias_disponibles:
+                            idx_dia = dias_disponibles.index(st.session_state["alumno_dia_seleccionado"])
+                            
+                        d_hoy = st.selectbox("Selecciona Día", dias_disponibles, index=idx_dia, key="widget_dia_alumno")
+                        st.session_state["alumno_dia_seleccionado"] = d_hoy
 
                     with col_w:
                          st.markdown("<br>", unsafe_allow_html=True)
@@ -813,7 +835,6 @@ else:
 
                 c_ok, c_fail = st.columns(2)
                 
-                # CTO FIX: Ahora cuando aprietan TERMINÉ, también guardamos en la base de datos qué "d_hoy" acaban de terminar.
                 if c_ok.button("✅ TERMINÉ POR HOY", use_container_width=True):
                     guardar_estado_sesion(alias, "Completado", fecha_dt=None, dia_rutina=d_hoy)
                     leer_sesiones_alumno.clear() 
@@ -827,11 +848,9 @@ else:
             st.markdown("### 📅 Asistencia")
             dfs = leer_sesiones_alumno(alias)
             
-            # Buscamos las rutinas del alumno para saber qué opciones darle (Día 1, Día 2, etc.)
             rut_asistencia = leer_rutina(alias)
             dias_opciones = sorted(rut_asistencia["Dia"].unique(), key=natural_sort_key) if not rut_asistencia.empty else ["Día 1", "Día 2", "Día 3"]
             
-            # CTO FIX: La magia visual. Buscamos el último "Completado" y mostramos el cartelito.
             if not dfs.empty and "Dia_rutina" in dfs.columns:
                 df_completados = dfs[dfs["Estado"] == "Completado"].sort_values("Fecha", ascending=False)
                 if not df_completados.empty:
@@ -860,15 +879,12 @@ else:
             with st.expander("🗓️ ¿Olvidaste dar el presente?"):
                 st.caption("Registra un entrenamiento que hiciste antes y olvidaste marcar.")
                 
-                # CTO FIX: Dividí el espacio en 3 columnas para que entre el nuevo selector de día.
                 col_d_pas, col_dia_pas, col_b_pas = st.columns([2, 2, 2])
                 fecha_pasada = col_d_pas.date_input("Fecha", value=datetime.now().date() - timedelta(days=1), max_value=datetime.now().date())
                 
-                # Agregamos la lista desplegable
                 dia_pasado = col_dia_pas.selectbox("¿Qué día hiciste?", dias_opciones)
                 
                 if col_b_pas.button("Marcar Completado", use_container_width=True):
-                    # Guardamos enviando la fecha pasada Y el día seleccionado
                     guardar_estado_sesion(alias, "Completado", fecha_dt=fecha_pasada, dia_rutina=dia_pasado)
                     st.success(f"Entreno ({dia_pasado}) del {fecha_pasada.strftime('%d/%m')} guardado.")
                     leer_sesiones_alumno.clear() 
